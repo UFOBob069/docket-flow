@@ -1,0 +1,38 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isRamosJames() {
+      return isSignedIn()
+        && request.auth.token.email.matches('.*@ramosjames[.]com$');
+    }
+
+    match /cases/{caseId} {
+      allow read: if isRamosJames() && resource.data.ownerId == request.auth.uid;
+      allow create: if isRamosJames()
+        && request.resource.data.ownerId == request.auth.uid;
+      allow update, delete: if isRamosJames()
+        && resource.data.ownerId == request.auth.uid;
+
+      match /events/{eventId} {
+        allow read: if isRamosJames()
+          && get(/databases/$(database)/documents/cases/$(caseId)).data.ownerId == request.auth.uid;
+        allow create: if isRamosJames()
+          && get(/databases/$(database)/documents/cases/$(caseId)).data.ownerId == request.auth.uid;
+        allow update, delete: if isRamosJames()
+          && get(/databases/$(database)/documents/cases/$(caseId)).data.ownerId == request.auth.uid;
+      }
+    }
+
+    match /contacts/{contactId} {
+      allow read: if isRamosJames() && resource.data.ownerId == request.auth.uid;
+      allow create: if isRamosJames()
+        && request.resource.data.ownerId == request.auth.uid;
+      allow update, delete: if isRamosJames()
+        && resource.data.ownerId == request.auth.uid;
+    }
+  }
+}

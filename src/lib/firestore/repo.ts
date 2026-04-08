@@ -1,0 +1,237 @@
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  onSnapshot,
+  orderBy,
+  query,
+  setDoc,
+  updateDoc,
+  where,
+  writeBatch,
+  type Firestore,
+  type Unsubscribe,
+} from "firebase/firestore";
+import type { CalendarEvent, Case, Contact } from "@/lib/types";
+
+/** Recursively strip `undefined` values from an object — Firestore rejects them. */
+function clean<T>(obj: T): T {
+  if (obj === null || typeof obj !== "object") return obj;
+  if (Array.isArray(obj)) return obj.map(clean) as unknown as T;
+  return Object.fromEntries(
+    Object.entries(obj as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .map(([k, v]) => [k, clean(v)])
+  ) as T;
+}
+
+export function subscribeCase(
+  db: Firestore,
+  caseId: string,
+  cb: (c: Case | null) => void
+): Unsubscribe {
+  return onSnapshot(doc(db, "cases", caseId), (snap) => {
+    if (!snap.exists()) cb(null);
+    else cb({ id: snap.id, ...(snap.data() as Omit<Case, "id">) });
+  });
+}
+
+export function subscribeCases(
+  db: Firestore,
+  ownerId: string,
+  cb: (cases: Case[]) => void
+): Unsubscribe {
+  const q = query(
+    collection(db, "cases"),
+    where("ownerId", "==", ownerId),
+    orderBy("updatedAt", "desc")
+  );
+  return onSnapshot(q, (snap) => {
+    const list: Case[] = [];
+    snap.forEach((d) => list.push({ id: d.id, ...(d.data() as Omit<Case, "id">) }));
+    cb(list);
+  });
+}
+
+export async function fetchCasesWithEvents(
+  db: Firestore,
+  ownerId: string
+): Promise<{ case: Case; events: CalendarEvent[] }[]> {
+  const q = query(
+    collection(db, "cases"),
+    where("ownerId", "==", ownerId),
+    orderBy("updatedAt", "desc")
+  );
+  const snap = await getDocs(q);
+  const result: { case: Case; events: CalendarEvent[] }[] = [];
+  for (const d of snap.docs) {
+    const c = { id: d.id, ...(d.data() as Omit<Case, "id">) };
+    const events = await fetchEventsForCase(db, c.id);
+    result.push({ case: c, events });
+  }
+  return result;
+}
+
+export async function fetchEventsForCase(
+  db: Firestore,
+  caseId: string
+): Promise<CalendarEvent[]> {
+  const q = query(
+    collection(db, "cases", caseId, "events"),
+    orderBy("date", "asc")
+  );
+  const snap = await getDocs(q);
+  const list: CalendarEvent[] = [];
+  snap.forEach((d) =>
+    list.push({ id: d.id, ...(d.data() as Omit<CalendarEvent, "id">) })
+  );
+  return list;
+}
+
+export function subscribeEvents(
+  db: Firestore,
+  caseId: string,
+  cb: (events: CalendarEvent[]) => void
+): Unsubscribe {
+  const q = query(
+    collection(db, "cases", caseId, "events"),
+    orderBy("date", "asc")
+  );
+  return onSnapshot(q, (snap) => {
+    const list: CalendarEvent[] = [];
+    snap.forEach((d) =>
+      list.push({ id: d.id, ...(d.data() as Omit<CalendarEvent, "id">) })
+    );
+    cb(list);
+  });
+}
+
+export async function createCase(
+  db: Firestore,
+  ownerId: string,
+  input: Omit<
+    Case,
+    "id" | "ownerId" | "createdAt" | "updatedAt" | "assignedContactIds" | "status"
+  > & { assignedContactIds?: string[] }
+): Promise<string> {
+  const now = Date.now();
+  const ref = await addDoc(collection(db, "cases"), clean({
+    ...input,
+    ownerId,
+    status: "active" as const,
+    assignedContactIds: input.assignedContactIds ?? [],
+    createdAt: now,
+    updatedAt: now,
+  }));
+  return ref.id;
+}
+
+export async function updateCase(
+  db: Firestore,
+  caseId: string,
+  patch: Partial<Omit<Case, "id" | "ownerId">>
+): Promise<void> {
+  await updateDoc(doc(db, "cases", caseId), clean({
+    ...patch,
+    updatedAt: Date.now(),
+  }));
+}
+
+export async function deleteCaseCascade(
+  db: Firestore,
+  caseId: string
+): Promise<void> {
+  const evSnap = await getDocs(collection(db, "cases", caseId, "events"));
+  const batch = writeBatch(db);
+  evSnap.forEach((d) => {
+    batch.delete(d.ref);
+  });
+  batch.delete(doc(db, "cases", caseId));
+  await batch.commit();
+}
+
+export async function setEventsForCase(
+  db: Firestore,
+  caseId: string,
+  ownerId: string,
+  events: CalendarEvent[]
+): Promise<void> {
+  const batch = writeBatch(db);
+  for (const e of events) {
+    const ref = doc(db, "cases", caseId, "events", e.id);
+    batch.set(ref, clean({ ...e, caseId, ownerId }));
+  }
+  await batch.commit();
+}
+
+export async function saveEvent(
+  db: Firestore,
+  caseId: string,
+  event: CalendarEvent
+): Promise<void> {
+  await setDoc(
+    doc(db, "cases", caseId, "events", event.id),
+    clean({ ...event, updatedAt: Date.now() }),
+    { merge: true }
+  );
+}
+
+export async function deleteEvent(
+  db: Firestore,
+  caseId: string,
+  eventId: string
+): Promise<void> {
+  await deleteDoc(doc(db, "cases", caseId, "events", eventId));
+}
+
+export function subscribeContacts(
+  db: Firestore,
+  ownerId: string,
+  cb: (contacts: Contact[]) => void
+): Unsubscribe {
+  const q = query(
+    collection(db, "contacts"),
+    where("ownerId", "==", ownerId),
+    orderBy("name")
+  );
+  return onSnapshot(q, (snap) => {
+    const list: Contact[] = [];
+    snap.forEach((d) => list.push({ id: d.id, ...(d.data() as Omit<Contact, "id">) }));
+    cb(list);
+  });
+}
+
+export async function addContact(
+  db: Firestore,
+  ownerId: string,
+  input: Omit<Contact, "id" | "ownerId" | "createdAt" | "updatedAt">
+): Promise<string> {
+  const now = Date.now();
+  const ref = await addDoc(collection(db, "contacts"), clean({
+    ...input,
+    ownerId,
+    createdAt: now,
+    updatedAt: now,
+  }));
+  return ref.id;
+}
+
+export async function updateContact(
+  db: Firestore,
+  contactId: string,
+  patch: Partial<Omit<Contact, "id" | "ownerId">>
+): Promise<void> {
+  await updateDoc(doc(db, "contacts", contactId), clean({
+    ...patch,
+    updatedAt: Date.now(),
+  }));
+}
+
+export async function deleteContact(
+  db: Firestore,
+  contactId: string
+): Promise<void> {
+  await deleteDoc(doc(db, "contacts", contactId));
+}
