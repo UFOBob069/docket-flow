@@ -22,7 +22,20 @@ function getOAuth2Client() {
 }
 
 function getCalendarId(): string {
-  return process.env.GOOGLE_CALENDAR_ID ?? "primary";
+  return process.env.GOOGLE_CALENDAR_ID || "primary";
+}
+
+function buildOverrides(minutes: number[]) {
+  const valid = minutes.filter((m) => m >= 0 && m <= MAX_REMINDER_MIN);
+  const overrides: { method: "popup" | "email"; minutes: number }[] = [];
+  for (const m of valid) {
+    overrides.push({ method: "popup", minutes: m });
+    if (m >= 1440) {
+      overrides.push({ method: "email", minutes: m });
+    }
+  }
+  // Google Calendar allows max 5 overrides
+  return overrides.slice(0, 5);
 }
 
 export async function insertGoogleEvent(params: {
@@ -35,11 +48,22 @@ export async function insertGoogleEvent(params: {
   const auth = getOAuth2Client();
   const calendar = google.calendar({ version: "v3", auth });
 
+  const calendarId = getCalendarId();
   const start = `${params.dateIso}T09:00:00`;
   const end = `${params.dateIso}T10:00:00`;
+  const overrides = buildOverrides(params.reminderMinutes);
+
+  console.log("[calendar] insert →", {
+    calendarId,
+    summary: params.summary,
+    date: params.dateIso,
+    reminderMinutesInput: params.reminderMinutes,
+    overrides,
+    attendees: params.attendeeEmails,
+  });
 
   const res = await calendar.events.insert({
-    calendarId: getCalendarId(),
+    calendarId,
     sendUpdates: params.attendeeEmails.length ? "all" : "none",
     requestBody: {
       summary: params.summary,
@@ -49,12 +73,12 @@ export async function insertGoogleEvent(params: {
       attendees: params.attendeeEmails.map((email) => ({ email })),
       reminders: {
         useDefault: false,
-        overrides: params.reminderMinutes
-          .filter((m) => m >= 0 && m <= MAX_REMINDER_MIN)
-          .map((minutes) => ({ method: "popup" as const, minutes })),
+        overrides,
       },
     },
   });
+
+  console.log("[calendar] created →", res.data.id, "reminders:", JSON.stringify(res.data.reminders));
 
   if (!res.data.id) {
     throw new Error("Calendar API did not return event id");
@@ -85,9 +109,7 @@ export async function patchGoogleEvent(params: {
   if (params.reminderMinutes?.length) {
     body.reminders = {
       useDefault: false,
-      overrides: params.reminderMinutes
-        .filter((m) => m >= 0 && m <= MAX_REMINDER_MIN)
-        .map((minutes) => ({ method: "popup" as const, minutes })),
+      overrides: buildOverrides(params.reminderMinutes),
     };
   }
   if (params.attendeeEmails?.length) {
