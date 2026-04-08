@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import mammoth from "mammoth";
 import OpenAI from "openai";
-import { PDFParse } from "pdf-parse";
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const pdfParse = require("pdf-parse/lib/pdf-parse.js") as (
+  buf: Buffer
+) => Promise<{ text: string }>;
 import { DEADLINE_SYSTEM_PROMPT } from "@/lib/llm-prompt";
 import type { ExtractedDeadline } from "@/lib/types";
 import { verifyIdToken } from "@/lib/firebase/admin";
@@ -47,13 +50,8 @@ async function extractText(buffer: Buffer, mime: string, name: string): Promise<
     const { value } = await mammoth.extractRawText({ buffer });
     return value;
   }
-  const parser = new PDFParse({ data: new Uint8Array(buffer) });
-  try {
-    const textResult = await parser.getText();
-    return textResult.text;
-  } finally {
-    await parser.destroy();
-  }
+  const data = await pdfParse(buffer);
+  return data.text;
 }
 
 function parseDeadlinesJson(raw: string): ExtractedDeadline[] {
