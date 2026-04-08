@@ -66,7 +66,9 @@ export async function POST(req: Request): Promise<Response> {
 
     if (body.action === "create") {
       const googleEventIds: string[] = [];
+      console.log("[sync] Creating", body.events.length, "events");
       for (const ev of body.events) {
+        console.log("[sync] Event:", ev.title, "reminderMinutes:", JSON.stringify(ev.reminderMinutes));
         const summary = `${body.caseName} – ${ev.title}`;
         let description = ev.description;
         if (body.sourceLabel) {
