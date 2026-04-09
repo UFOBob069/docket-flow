@@ -58,7 +58,7 @@ export default function ContactsPage() {
   useEffect(() => {
     if (!firebaseReady || loading || !user) return;
     const db = getDb();
-    const unsub = subscribeContacts(db, user.uid, setContacts);
+    const unsub = subscribeContacts(db, setContacts);
     return () => unsub();
   }, [user, loading, firebaseReady]);
 

@@ -69,10 +69,6 @@ export default function CaseDetailPage() {
     if (!firebaseReady || loading || !user || !caseId) return;
     const db = getDb();
     const u1 = subscribeCase(db, caseId, (docSnap) => {
-      if (docSnap && docSnap.ownerId !== user.uid) {
-        setC(null);
-        return;
-      }
       setC(docSnap);
     });
     const u2 = subscribeEvents(db, caseId, setEvents);

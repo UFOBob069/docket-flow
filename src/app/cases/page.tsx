@@ -28,7 +28,7 @@ export default function CasesListPage() {
   useEffect(() => {
     if (!firebaseReady || loading || !user) return;
     const db = getDb();
-    const unsub = subscribeCases(db, user.uid, setCases);
+    const unsub = subscribeCases(db, setCases);
     return () => unsub();
   }, [user, loading, firebaseReady]);
 

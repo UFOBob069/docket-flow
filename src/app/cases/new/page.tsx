@@ -82,7 +82,7 @@ export default function NewCaseWizardPage() {
   useEffect(() => {
     if (!firebaseReady || loading || !user) return;
     const db = getDb();
-    return subscribeContacts(db, user.uid, setContacts);
+    return subscribeContacts(db, setContacts);
   }, [user, loading, firebaseReady]);
 
   useEffect(() => {
@@ -369,11 +369,18 @@ export default function NewCaseWizardPage() {
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               />
             </div>
-            {file && (
-              <div className="rounded-lg bg-primary-light px-4 py-2.5">
+            {file && !extracting && (
+              <div className="flex items-center justify-between rounded-lg bg-primary-light px-4 py-2.5">
                 <p className="text-sm font-medium text-primary">
                   {file.name} <span className="font-normal text-text-muted">({(file.size / 1024).toFixed(0)} KB)</span>
                 </p>
+                <button
+                  type="button"
+                  className="ml-3 text-sm font-medium text-danger hover:underline"
+                  onClick={() => { setFile(null); setEvents([]); setErr(null); }}
+                >
+                  Remove
+                </button>
               </div>
             )}
             {extracting && (

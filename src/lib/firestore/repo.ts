@@ -9,7 +9,6 @@ import {
   query,
   setDoc,
   updateDoc,
-  where,
   writeBatch,
   type Firestore,
   type Unsubscribe,
@@ -27,6 +26,8 @@ function clean<T>(obj: T): T {
   ) as T;
 }
 
+/* ── Cases ────────────────────────────────────────────────────────── */
+
 export function subscribeCase(
   db: Firestore,
   caseId: string,
@@ -40,12 +41,10 @@ export function subscribeCase(
 
 export function subscribeCases(
   db: Firestore,
-  ownerId: string,
   cb: (cases: Case[]) => void
 ): Unsubscribe {
   const q = query(
     collection(db, "cases"),
-    where("ownerId", "==", ownerId),
     orderBy("updatedAt", "desc")
   );
   return onSnapshot(q, (snap) => {
@@ -56,12 +55,10 @@ export function subscribeCases(
 }
 
 export async function fetchCasesWithEvents(
-  db: Firestore,
-  ownerId: string
+  db: Firestore
 ): Promise<{ case: Case; events: CalendarEvent[] }[]> {
   const q = query(
     collection(db, "cases"),
-    where("ownerId", "==", ownerId),
     orderBy("updatedAt", "desc")
   );
   const snap = await getDocs(q);
@@ -186,14 +183,14 @@ export async function deleteEvent(
   await deleteDoc(doc(db, "cases", caseId, "events", eventId));
 }
 
+/* ── Contacts ─────────────────────────────────────────────────────── */
+
 export function subscribeContacts(
   db: Firestore,
-  ownerId: string,
   cb: (contacts: Contact[]) => void
 ): Unsubscribe {
   const q = query(
     collection(db, "contacts"),
-    where("ownerId", "==", ownerId),
     orderBy("name")
   );
   return onSnapshot(q, (snap) => {

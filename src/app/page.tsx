@@ -122,7 +122,7 @@ export default function DashboardPage() {
       setLoadError(null);
       try {
         const db = getDb();
-        const bundled = await fetchCasesWithEvents(db, user.uid);
+        const bundled = await fetchCasesWithEvents(db);
         const flat: Row[] = [];
         const t = todayIso();
         for (const { case: c, events } of bundled) {
