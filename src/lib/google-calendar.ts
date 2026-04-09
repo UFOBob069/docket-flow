@@ -2,30 +2,47 @@ import { google } from "googleapis";
 
 const MAX_REMINDER_MIN = 40320;
 
-function getAuthClient() {
+/**
+ * Build a JWT client that impersonates `subject`.
+ * With DWD, the service account can impersonate any @ramosjames.com user,
+ * so we create events directly on each person's calendar.
+ */
+function getAuthForUser(subject: string) {
   const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
   const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n");
-  const impersonate = process.env.GOOGLE_IMPERSONATE_EMAIL;
 
   if (!clientEmail || !privateKey) {
     throw new Error("Set GOOGLE_CLIENT_EMAIL and GOOGLE_PRIVATE_KEY for Calendar API");
-  }
-  if (!impersonate) {
-    throw new Error("Set GOOGLE_IMPERSONATE_EMAIL to a @ramosjames.com user for DWD impersonation");
   }
 
   return new google.auth.JWT({
     email: clientEmail,
     key: privateKey,
     scopes: ["https://www.googleapis.com/auth/calendar.events"],
-    subject: impersonate,
+    subject,
   });
 }
 
-function getCalendarId(): string {
-  return process.env.GOOGLE_CALENDAR_ID || "primary";
+function getDefaultUser(): string {
+  const email = process.env.GOOGLE_IMPERSONATE_EMAIL;
+  if (!email) {
+    throw new Error("Set GOOGLE_IMPERSONATE_EMAIL to a @ramosjames.com user");
+  }
+  return email;
 }
 
+function buildOverrides(minutes: number[]) {
+  return minutes
+    .filter((m) => m >= 0 && m <= MAX_REMINDER_MIN)
+    .slice(0, 5)
+    .map((m) => ({ method: "popup" as const, minutes: m }));
+}
+
+/**
+ * Create the event on EACH attendee's primary calendar (via DWD impersonation).
+ * This makes reminders native to each person — no invite needed.
+ * Returns the event ID from the organizer's (default user) calendar.
+ */
 export async function insertGoogleEvent(params: {
   summary: string;
   description: string;
@@ -33,43 +50,54 @@ export async function insertGoogleEvent(params: {
   attendeeEmails: string[];
   reminderMinutes: number[];
 }): Promise<string> {
-  const auth = getAuthClient();
-  const calendar = google.calendar({ version: "v3", auth });
-
-  const calendarId = getCalendarId();
+  const defaultUser = getDefaultUser();
   const start = `${params.dateIso}T09:00:00`;
   const end = `${params.dateIso}T10:00:00`;
+  const overrides = buildOverrides(params.reminderMinutes);
 
-  const overrides = params.reminderMinutes
-    .filter((m) => m >= 0 && m <= MAX_REMINDER_MIN)
-    .slice(0, 5)
-    .map((minutes) => ({ method: "popup" as const, minutes }));
+  const eventBody = {
+    summary: params.summary,
+    description: params.description,
+    start: { dateTime: start, timeZone: "America/Chicago" },
+    end: { dateTime: end, timeZone: "America/Chicago" },
+    reminders: { useDefault: false, overrides },
+  };
 
-  console.log("[calendar] INSERT calendarId:", calendarId);
-  console.log("[calendar] INSERT reminders:", JSON.stringify({ useDefault: false, overrides }));
+  // Dedupe: all unique @ramosjames.com users who should get this event
+  const allRecipients = Array.from(
+    new Set([defaultUser, ...params.attendeeEmails].map((e) => e.toLowerCase()))
+  );
 
-  const res = await calendar.events.insert({
-    calendarId,
-    sendUpdates: params.attendeeEmails.length ? "all" : "none",
-    requestBody: {
-      summary: params.summary,
-      description: params.description,
-      start: { dateTime: start, timeZone: "America/Chicago" },
-      end: { dateTime: end, timeZone: "America/Chicago" },
-      attendees: params.attendeeEmails.map((email) => ({ email })),
-      reminders: {
-        useDefault: false,
-        overrides,
-      },
-    },
-  });
+  let organizerEventId = "";
 
-  console.log("[calendar] RESPONSE id:", res.data.id, "reminders:", JSON.stringify(res.data.reminders));
+  for (const userEmail of allRecipients) {
+    try {
+      const auth = getAuthForUser(userEmail);
+      const calendar = google.calendar({ version: "v3", auth });
 
-  if (!res.data.id) {
-    throw new Error("Calendar API did not return event id");
+      console.log("[calendar] Creating event on", userEmail, "reminders:", JSON.stringify(overrides));
+
+      const res = await calendar.events.insert({
+        calendarId: "primary",
+        requestBody: eventBody,
+      });
+
+      console.log("[calendar]", userEmail, "→ eventId:", res.data.id);
+
+      if (userEmail.toLowerCase() === defaultUser.toLowerCase()) {
+        organizerEventId = res.data.id ?? "";
+      }
+    } catch (err) {
+      // Non-domain emails (gmail, etc.) can't be impersonated — skip silently
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("[calendar] Could not create event for", userEmail, ":", msg);
+    }
   }
-  return res.data.id;
+
+  if (!organizerEventId) {
+    throw new Error("Failed to create event on organizer calendar");
+  }
+  return organizerEventId;
 }
 
 export async function patchGoogleEvent(params: {
@@ -80,7 +108,7 @@ export async function patchGoogleEvent(params: {
   attendeeEmails?: string[];
   reminderMinutes?: number[];
 }): Promise<void> {
-  const auth = getAuthClient();
+  const auth = getAuthForUser(getDefaultUser());
   const calendar = google.calendar({ version: "v3", auth });
 
   const body: Record<string, unknown> = {};
@@ -93,30 +121,21 @@ export async function patchGoogleEvent(params: {
     body.end = { dateTime: end, timeZone: "America/Chicago" };
   }
   if (params.reminderMinutes?.length) {
-    const overrides = params.reminderMinutes
-      .filter((m) => m >= 0 && m <= MAX_REMINDER_MIN)
-      .slice(0, 5)
-      .map((minutes) => ({ method: "popup" as const, minutes }));
-    body.reminders = { useDefault: false, overrides };
-  }
-  if (params.attendeeEmails?.length) {
-    body.attendees = params.attendeeEmails.map((email) => ({ email }));
+    body.reminders = { useDefault: false, overrides: buildOverrides(params.reminderMinutes) };
   }
 
   await calendar.events.patch({
-    calendarId: getCalendarId(),
+    calendarId: "primary",
     eventId: params.googleEventId,
-    sendUpdates: params.attendeeEmails?.length ? "all" : "none",
     requestBody: body,
   });
 }
 
 export async function deleteGoogleEvent(googleEventId: string): Promise<void> {
-  const auth = getAuthClient();
+  const auth = getAuthForUser(getDefaultUser());
   const calendar = google.calendar({ version: "v3", auth });
   await calendar.events.delete({
-    calendarId: getCalendarId(),
+    calendarId: "primary",
     eventId: googleEventId,
-    sendUpdates: "all",
   });
 }
