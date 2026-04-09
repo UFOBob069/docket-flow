@@ -2,23 +2,24 @@ import { google } from "googleapis";
 
 const MAX_REMINDER_MIN = 40320;
 
-function getOAuth2Client() {
-  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
-  const refreshToken = process.env.GOOGLE_OAUTH_REFRESH_TOKEN;
+function getAuthClient() {
+  const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
+  const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n");
+  const impersonate = process.env.GOOGLE_IMPERSONATE_EMAIL;
 
-  const missing: string[] = [];
-  if (!clientId) missing.push("GOOGLE_OAUTH_CLIENT_ID");
-  if (!clientSecret) missing.push("GOOGLE_OAUTH_CLIENT_SECRET");
-  if (!refreshToken) missing.push("GOOGLE_OAUTH_REFRESH_TOKEN");
-
-  if (missing.length) {
-    throw new Error(`Missing env vars: ${missing.join(", ")}. Restart the dev server after updating .env.local`);
+  if (!clientEmail || !privateKey) {
+    throw new Error("Set GOOGLE_CLIENT_EMAIL and GOOGLE_PRIVATE_KEY for Calendar API");
+  }
+  if (!impersonate) {
+    throw new Error("Set GOOGLE_IMPERSONATE_EMAIL to a @ramosjames.com user for DWD impersonation");
   }
 
-  const oauth2 = new google.auth.OAuth2(clientId, clientSecret);
-  oauth2.setCredentials({ refresh_token: refreshToken });
-  return oauth2;
+  return new google.auth.JWT({
+    email: clientEmail,
+    key: privateKey,
+    scopes: ["https://www.googleapis.com/auth/calendar.events"],
+    subject: impersonate,
+  });
 }
 
 function getCalendarId(): string {
@@ -32,7 +33,7 @@ export async function insertGoogleEvent(params: {
   attendeeEmails: string[];
   reminderMinutes: number[];
 }): Promise<string> {
-  const auth = getOAuth2Client();
+  const auth = getAuthClient();
   const calendar = google.calendar({ version: "v3", auth });
 
   const calendarId = getCalendarId();
@@ -44,29 +45,26 @@ export async function insertGoogleEvent(params: {
     .slice(0, 5)
     .map((minutes) => ({ method: "popup" as const, minutes }));
 
-  const requestBody = {
-    summary: params.summary,
-    description: params.description,
-    start: { dateTime: start, timeZone: "America/Chicago" },
-    end: { dateTime: end, timeZone: "America/Chicago" },
-    attendees: params.attendeeEmails.map((email) => ({ email })),
-    reminders: {
-      useDefault: false,
-      overrides,
-    },
-  };
-
   console.log("[calendar] INSERT calendarId:", calendarId);
-  console.log("[calendar] INSERT reminders:", JSON.stringify(requestBody.reminders));
+  console.log("[calendar] INSERT reminders:", JSON.stringify({ useDefault: false, overrides }));
 
   const res = await calendar.events.insert({
     calendarId,
     sendUpdates: params.attendeeEmails.length ? "all" : "none",
-    requestBody,
+    requestBody: {
+      summary: params.summary,
+      description: params.description,
+      start: { dateTime: start, timeZone: "America/Chicago" },
+      end: { dateTime: end, timeZone: "America/Chicago" },
+      attendees: params.attendeeEmails.map((email) => ({ email })),
+      reminders: {
+        useDefault: false,
+        overrides,
+      },
+    },
   });
 
-  console.log("[calendar] RESPONSE id:", res.data.id);
-  console.log("[calendar] RESPONSE reminders:", JSON.stringify(res.data.reminders));
+  console.log("[calendar] RESPONSE id:", res.data.id, "reminders:", JSON.stringify(res.data.reminders));
 
   if (!res.data.id) {
     throw new Error("Calendar API did not return event id");
@@ -82,7 +80,7 @@ export async function patchGoogleEvent(params: {
   attendeeEmails?: string[];
   reminderMinutes?: number[];
 }): Promise<void> {
-  const auth = getOAuth2Client();
+  const auth = getAuthClient();
   const calendar = google.calendar({ version: "v3", auth });
 
   const body: Record<string, unknown> = {};
@@ -114,7 +112,7 @@ export async function patchGoogleEvent(params: {
 }
 
 export async function deleteGoogleEvent(googleEventId: string): Promise<void> {
-  const auth = getOAuth2Client();
+  const auth = getAuthClient();
   const calendar = google.calendar({ version: "v3", auth });
   await calendar.events.delete({
     calendarId: getCalendarId(),
