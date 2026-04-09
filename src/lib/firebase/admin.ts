@@ -1,6 +1,6 @@
 import admin from "firebase-admin";
 
-function init(): void {
+export function initAdmin(): void {
   if (admin.apps.length) return;
   const json = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
   if (!json) return;
@@ -12,7 +12,7 @@ function init(): void {
   }
 }
 
-init();
+initAdmin();
 
 export function getAdminAuth(): admin.auth.Auth | null {
   if (!admin.apps.length) return null;

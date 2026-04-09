@@ -56,6 +56,8 @@ export interface CalendarEvent {
   noiseFlag: boolean;
   noiseReason?: string;
   remindersMinutes: number[];
+  /** Tracks which email reminders have already been sent (minutes values) */
+  emailRemindersSent?: number[];
   createdAt: number;
   updatedAt: number;
 }
