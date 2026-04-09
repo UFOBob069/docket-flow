@@ -46,6 +46,8 @@ export interface CalendarEvent {
   category: EventCategory;
   priority?: "high" | "medium" | "low";
   googleEventId?: string;
+  /** Lowercased email → Google event id on that user's primary calendar (for patch/delete/reassign across the team) */
+  googleCalendarEventIdsByEmail?: Record<string, string>;
   included: boolean;
   /** Suggested merge with other same-day items */
   groupSuggested: boolean;
@@ -60,6 +62,28 @@ export interface CalendarEvent {
   emailRemindersSent?: number[];
   createdAt: number;
   updatedAt: number;
+}
+
+export type ActivityAction =
+  | "case_created"
+  | "case_archived"
+  | "case_activated"
+  | "case_deleted"
+  | "event_created"
+  | "event_edited"
+  | "event_deleted"
+  | "events_bulk_deleted"
+  | "events_bulk_rescheduled"
+  | "contacts_reassigned";
+
+export interface ActivityEntry {
+  id: string;
+  caseId?: string;
+  caseName?: string;
+  action: ActivityAction;
+  description: string;
+  userEmail: string;
+  createdAt: number;
 }
 
 /** LLM raw row before smart processing */

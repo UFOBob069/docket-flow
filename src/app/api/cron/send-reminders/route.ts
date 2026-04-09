@@ -68,7 +68,7 @@ export async function GET(req: Request): Promise<Response> {
           if (alreadySent.includes(minutes)) continue;
 
           const reminderDays = Math.floor(minutes / 1440);
-          if (daysUntil !== reminderDays) continue;
+          if (daysUntil > reminderDays) continue; // not yet time
 
           // This reminder is due today — send to all attendees
           for (const email of attendeeEmails) {

@@ -4,6 +4,7 @@ import {
   deleteDoc,
   doc,
   getDocs,
+  limit as firestoreLimit,
   onSnapshot,
   orderBy,
   query,
@@ -13,7 +14,7 @@ import {
   type Firestore,
   type Unsubscribe,
 } from "firebase/firestore";
-import type { CalendarEvent, Case, Contact } from "@/lib/types";
+import type { ActivityAction, ActivityEntry, CalendarEvent, Case, Contact } from "@/lib/types";
 
 /** Recursively strip `undefined` values from an object — Firestore rejects them. */
 function clean<T>(obj: T): T {
@@ -231,4 +232,79 @@ export async function deleteContact(
   contactId: string
 ): Promise<void> {
   await deleteDoc(doc(db, "contacts", contactId));
+}
+
+/* ── Activity Log ──────────────────────────────────────────────────── */
+
+export async function logActivity(
+  db: Firestore,
+  entry: Omit<ActivityEntry, "id" | "createdAt">
+): Promise<void> {
+  await addDoc(collection(db, "activity"), clean({
+    ...entry,
+    createdAt: Date.now(),
+  }));
+}
+
+export function subscribeActivity(
+  db: Firestore,
+  max: number,
+  cb: (entries: ActivityEntry[]) => void
+): Unsubscribe {
+  const q = query(
+    collection(db, "activity"),
+    orderBy("createdAt", "desc"),
+    firestoreLimit(max)
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      const list: ActivityEntry[] = [];
+      snap.forEach((d) =>
+        list.push({ id: d.id, ...(d.data() as Omit<ActivityEntry, "id">) })
+      );
+      cb(list);
+    },
+    (err) => {
+      console.warn(
+        "[firestore] activity listener:",
+        err.message,
+        "— deploy firestore.rules (match /activity/) or sign in with @ramosjames.com"
+      );
+      cb([]);
+    }
+  );
+}
+
+/* ── Bulk operations ───────────────────────────────────────────────── */
+
+export async function bulkDeleteEvents(
+  db: Firestore,
+  caseId: string,
+  eventIds: string[]
+): Promise<void> {
+  const batch = writeBatch(db);
+  for (const eid of eventIds) {
+    batch.delete(doc(db, "cases", caseId, "events", eid));
+  }
+  await batch.commit();
+}
+
+export async function bulkRescheduleEvents(
+  db: Firestore,
+  caseId: string,
+  eventIds: string[],
+  shiftDays: number
+): Promise<void> {
+  const batch = writeBatch(db);
+  const snap = await getDocs(collection(db, "cases", caseId, "events"));
+  for (const d of snap.docs) {
+    if (!eventIds.includes(d.id)) continue;
+    const ev = d.data() as CalendarEvent;
+    const oldDate = new Date(ev.date + "T00:00:00");
+    oldDate.setDate(oldDate.getDate() + shiftDays);
+    const newDate = oldDate.toISOString().slice(0, 10);
+    batch.update(d.ref, { date: newDate, updatedAt: Date.now() });
+  }
+  await batch.commit();
 }

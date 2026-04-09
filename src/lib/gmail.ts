@@ -23,6 +23,11 @@ function getGmailAuth() {
   };
 }
 
+function encodeSubject(text: string): string {
+  const encoded = Buffer.from(text, "utf-8").toString("base64");
+  return `=?UTF-8?B?${encoded}?=`;
+}
+
 function buildMimeMessage(opts: {
   from: string;
   to: string;
@@ -32,7 +37,7 @@ function buildMimeMessage(opts: {
   const lines = [
     `From: DocketFlow <${opts.from}>`,
     `To: ${opts.to}`,
-    `Subject: ${opts.subject}`,
+    `Subject: ${encodeSubject(opts.subject)}`,
     "MIME-Version: 1.0",
     'Content-Type: text/html; charset="UTF-8"',
     "",

@@ -17,5 +17,9 @@ service cloud.firestore {
     match /contacts/{contactId} {
       allow read, create, update, delete: if isRamosJames();
     }
+
+    match /activity/{entryId} {
+      allow read, create: if isRamosJames();
+    }
   }
 }

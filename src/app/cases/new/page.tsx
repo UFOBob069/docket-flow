@@ -15,6 +15,7 @@ import {
 } from "@/lib/reminder-presets";
 import {
   createCase,
+  logActivity,
   saveEvent,
   setEventsForCase,
   subscribeContacts,
@@ -192,8 +193,13 @@ export default function NewCaseWizardPage() {
 
       setProgressMsg("Syncing to Google Calendar…");
       const batches = buildCalendarBatches(caseEvents);
+      const allContactIds = [attorneyId, paralegalId, legalAssistantId, otherId, ...extraContactIds].filter(Boolean);
       const attendeeEmails = Array.from(
-        new Set([attorney.email, paralegal.email].filter(Boolean))
+        new Set(
+          allContactIds
+            .map((id) => contacts.find((c) => c.id === id)?.email)
+            .filter((e): e is string => Boolean(e))
+        )
       );
       const calRes = await fetch("/api/calendar/sync", {
         method: "POST",
@@ -218,23 +224,39 @@ export default function NewCaseWizardPage() {
 
       const calJson = (await calRes.json()) as {
         googleEventIds?: string[];
+        googleEventIdMaps?: Record<string, string>[];
         error?: string;
       };
       if (!calRes.ok) throw new Error(calJson.error ?? "Google Calendar create failed");
       const googleEventIds = calJson.googleEventIds ?? [];
+      const googleEventIdMaps = calJson.googleEventIdMaps ?? [];
       let withGoogle: CalendarEvent[] = caseEvents.map((e) => ({ ...e }));
       for (let i = 0; i < batches.length; i++) {
         const ge = googleEventIds[i];
+        const map = googleEventIdMaps[i];
         if (!ge) continue;
         for (const eid of batches[i].sourceEventIds) {
           withGoogle = withGoogle.map((ev) =>
-            ev.id === eid ? { ...ev, googleEventId: ge } : ev
+            ev.id === eid
+              ? {
+                  ...ev,
+                  googleEventId: ge,
+                  ...(map && Object.keys(map).length ? { googleCalendarEventIdsByEmail: map } : {}),
+                }
+              : ev
           );
         }
       }
 
       setProgressMsg("Finalizing…");
       await Promise.all(withGoogle.map((ev) => saveEvent(db, caseId, ev)));
+      await logActivity(db, {
+        caseId,
+        caseName: name.trim(),
+        action: "case_created",
+        description: `Created case with ${caseEvents.length} events`,
+        userEmail: user.email ?? "",
+      });
       setProgressPct(100);
       setProgressMsg("Done! Redirecting…");
       router.push(`/cases/${caseId}`);

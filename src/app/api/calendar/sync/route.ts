@@ -3,6 +3,7 @@ import {
   deleteGoogleEvent,
   insertGoogleEvent,
   patchGoogleEvent,
+  reconcileCalendarEventTeam,
 } from "@/lib/google-calendar";
 import { verifyIdToken } from "@/lib/firebase/admin";
 
@@ -24,17 +25,33 @@ type CreateBody = {
 type PatchBody = {
   action: "update";
   googleEventId: string;
+  googleCalendarEventIdsByEmail?: Record<string, string>;
   caseName: string;
   title: string;
   date: string;
   description: string;
-  attendeeEmails?: string[];
   reminderMinutes?: number[];
 };
 
 type DeleteBody = {
   action: "delete";
   googleEventId: string;
+  googleCalendarEventIdsByEmail?: Record<string, string>;
+};
+
+type ReconcileBody = {
+  action: "reconcile_team";
+  caseName: string;
+  sourceLabel?: string;
+  attendeeEmails: string[];
+  events: {
+    title: string;
+    date: string;
+    description: string;
+    reminderMinutes?: number[];
+    googleEventId?: string;
+    googleCalendarEventIdsByEmail?: Record<string, string>;
+  }[];
 };
 
 export async function POST(req: Request): Promise<Response> {
@@ -44,10 +61,17 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   try {
-    const body = (await req.json()) as CreateBody | PatchBody | DeleteBody;
+    const body = (await req.json()) as
+      | CreateBody
+      | PatchBody
+      | DeleteBody
+      | ReconcileBody;
 
     if (body.action === "delete") {
-      await deleteGoogleEvent(body.googleEventId);
+      await deleteGoogleEvent(
+        body.googleEventId,
+        body.googleCalendarEventIdsByEmail
+      );
       return NextResponse.json({ ok: true });
     }
 
@@ -55,17 +79,46 @@ export async function POST(req: Request): Promise<Response> {
       const summary = `${body.caseName} – ${body.title}`;
       await patchGoogleEvent({
         googleEventId: body.googleEventId,
+        idsByEmail: body.googleCalendarEventIdsByEmail,
         summary,
         description: body.description,
         dateIso: body.date,
-        attendeeEmails: body.attendeeEmails,
         reminderMinutes: body.reminderMinutes ?? [20160, 10080, 1440],
       });
       return NextResponse.json({ ok: true });
     }
 
+    if (body.action === "reconcile_team") {
+      const results: {
+        organizerEventId: string;
+        idsByEmail: Record<string, string>;
+      }[] = [];
+      for (const ev of body.events) {
+        const summary = `${body.caseName} – ${ev.title}`;
+        let description = ev.description;
+        if (body.sourceLabel) {
+          description = `Source: ${body.sourceLabel}\n\n${description}`;
+        }
+        const r = await reconcileCalendarEventTeam({
+          summary,
+          description,
+          dateIso: ev.date,
+          reminderMinutes: ev.reminderMinutes ?? [20160, 10080, 1440],
+          attendeeEmails: body.attendeeEmails,
+          idsByEmail: ev.googleCalendarEventIdsByEmail,
+          googleEventId: ev.googleEventId,
+        });
+        results.push({
+          organizerEventId: r.organizerEventId,
+          idsByEmail: r.idsByEmail,
+        });
+      }
+      return NextResponse.json({ results });
+    }
+
     if (body.action === "create") {
       const googleEventIds: string[] = [];
+      const googleEventIdMaps: Record<string, string>[] = [];
       console.log("[sync] Creating", body.events.length, "events");
       for (const ev of body.events) {
         console.log("[sync] Event:", ev.title, "reminderMinutes:", JSON.stringify(ev.reminderMinutes));
@@ -74,16 +127,17 @@ export async function POST(req: Request): Promise<Response> {
         if (body.sourceLabel) {
           description = `Source: ${body.sourceLabel}\n\n${description}`;
         }
-        const googleEventId = await insertGoogleEvent({
+        const { organizerEventId, idsByEmail } = await insertGoogleEvent({
           summary,
           description,
           dateIso: ev.date,
           attendeeEmails: body.attendeeEmails,
           reminderMinutes: ev.reminderMinutes ?? [20160, 10080, 1440],
         });
-        googleEventIds.push(googleEventId);
+        googleEventIds.push(organizerEventId);
+        googleEventIdMaps.push(idsByEmail);
       }
-      return NextResponse.json({ googleEventIds });
+      return NextResponse.json({ googleEventIds, googleEventIdMaps });
     }
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
