@@ -50,6 +50,16 @@ async function calendarApi(body: unknown, idToken: string | null): Promise<Respo
   });
 }
 
+type VerifyResponse = {
+  checkedAt: string;
+  summary: { totalChecks: number; ok: number; failed: number };
+  events: {
+    title: string;
+    date: string;
+    checks: { email: string; ok: boolean; summary?: string; startDate?: string; error?: string }[];
+  }[];
+};
+
 export default function CaseDetailPage() {
   const params = useParams();
   const caseId = params.caseId as string;
@@ -73,6 +83,9 @@ export default function CaseDetailPage() {
   const [showReassign, setShowReassign] = useState(false);
   const [reassignIds, setReassignIds] = useState<string[]>([]);
 
+  const [verifyBusy, setVerifyBusy] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<VerifyResponse | null>(null);
+
   useEffect(() => {
     if (!firebaseReady || loading || !user || !caseId) return;
     const db = getDb();
@@ -89,6 +102,52 @@ export default function CaseDetailPage() {
   function flash(message: string) {
     setSuccessMsg(message);
     setTimeout(() => setSuccessMsg(null), 3000);
+  }
+
+  async function runCalendarVerify() {
+    if (!idToken) return;
+    const toVerify = events.filter(
+      (e) =>
+        e.googleEventId ||
+        (e.googleCalendarEventIdsByEmail &&
+          Object.keys(e.googleCalendarEventIdsByEmail).length > 0)
+    );
+    if (toVerify.length === 0) {
+      setMsg("No synced deadlines to verify.");
+      return;
+    }
+    setVerifyBusy(true);
+    setMsg(null);
+    setVerifyResult(null);
+    try {
+      const res = await fetch("/api/calendar/verify", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          events: toVerify.map((e) => ({
+            title: e.title,
+            date: e.date,
+            googleEventId: e.googleEventId,
+            googleCalendarEventIdsByEmail: e.googleCalendarEventIdsByEmail,
+          })),
+        }),
+      });
+      const data = (await res.json()) as VerifyResponse & { error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Verification failed");
+      setVerifyResult(data);
+      if (data.summary.failed === 0) {
+        flash(
+          `Google Calendar OK — ${data.summary.ok} copy${data.summary.ok !== 1 ? "ies" : ""} verified`
+        );
+      }
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Verification failed");
+    } finally {
+      setVerifyBusy(false);
+    }
   }
 
   function toggleSelect(id: string) {
@@ -395,6 +454,14 @@ export default function CaseDetailPage() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={busy || verifyBusy}
+            onClick={() => void runCalendarVerify()}
+          >
+            {verifyBusy ? "Verifying…" : "Verify Google Calendar"}
+          </Button>
           <Button variant="secondary" size="sm" disabled={busy}
             onClick={() => void setStatus(c.status === "active" ? "archived" : "active")}>
             Mark {c.status === "active" ? "archived" : "active"}
@@ -469,6 +536,59 @@ export default function CaseDetailPage() {
         <div className="mt-4 rounded-lg border border-success/20 bg-success-light px-4 py-3">
           <p className="text-sm text-success">{successMsg}</p>
         </div>
+      )}
+
+      {verifyResult && (
+        <Card className="mt-4 border-primary/20">
+          <CardBody>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-semibold text-text">Calendar verification</h3>
+                <p className="mt-0.5 text-xs text-text-muted">
+                  Checked {verifyResult.summary.totalChecks} stored cop
+                  {verifyResult.summary.totalChecks !== 1 ? "ies" : "y"} via Google Calendar API
+                  {" · "}
+                  {new Date(verifyResult.checkedAt).toLocaleString()}
+                </p>
+                <p className="mt-2 text-xs text-text-dim">
+                  Each row is one person&apos;s primary calendar. Legacy syncs may only list the organizer until
+                  you reassign or recreate with the full team map.
+                </p>
+              </div>
+              <Badge variant={verifyResult.summary.failed === 0 ? "success" : "warning"}>
+                {verifyResult.summary.ok} ok
+                {verifyResult.summary.failed > 0
+                  ? ` · ${verifyResult.summary.failed} issue${verifyResult.summary.failed !== 1 ? "s" : ""}`
+                  : ""}
+              </Badge>
+            </div>
+            <ul className="mt-4 max-h-72 space-y-3 overflow-y-auto text-sm">
+              {verifyResult.events.map((row, idx) => (
+                <li key={`${row.date}-${idx}-${row.title.slice(0, 24)}`} className="rounded-lg border border-border bg-surface-alt/50 px-3 py-2">
+                  <p className="font-medium text-text">{row.title}</p>
+                  <p className="text-xs text-text-muted">{row.date}</p>
+                  <ul className="mt-2 space-y-1">
+                    {row.checks.map((ch) => (
+                      <li key={ch.email} className="flex flex-wrap items-baseline gap-x-2 text-xs">
+                        <span className={ch.ok ? "text-success" : "text-danger"}>
+                          {ch.ok ? "✓" : "✗"} {ch.email}
+                        </span>
+                        {ch.ok && ch.summary && (
+                          <span className="text-text-dim truncate max-w-[220px]" title={ch.summary}>
+                            {ch.summary}
+                          </span>
+                        )}
+                        {ch.error && (
+                          <span className="text-danger">{ch.error}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </li>
+              ))}
+            </ul>
+          </CardBody>
+        </Card>
       )}
 
       {/* Bulk action bar */}

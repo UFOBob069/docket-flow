@@ -267,3 +267,68 @@ export async function reconcileCalendarEventTeam(params: {
   const organizerEventId = nextMap[defaultLower] ?? Object.values(nextMap)[0] ?? "";
   return { idsByEmail: nextMap, organizerEventId };
 }
+
+/** Stored fields → map of calendar copies to verify (legacy = organizer id only). */
+export function idsByEmailForVerification(
+  googleCalendarEventIdsByEmail?: Record<string, string>,
+  googleEventId?: string
+): Record<string, string> {
+  const defaultLower = getDefaultUser().toLowerCase();
+  const m: Record<string, string> = {};
+  if (googleCalendarEventIdsByEmail) {
+    for (const [k, v] of Object.entries(googleCalendarEventIdsByEmail)) {
+      m[k.toLowerCase()] = v;
+    }
+  }
+  if (Object.keys(m).length === 0 && googleEventId) {
+    m[defaultLower] = googleEventId;
+  }
+  return m;
+}
+
+export type CalendarVerifyCheck = {
+  email: string;
+  ok: boolean;
+  summary?: string;
+  startDate?: string;
+  error?: string;
+};
+
+/** Confirm `events.get` succeeds for this user’s primary calendar (DWD impersonation). */
+export async function verifyGoogleEventCopy(
+  userEmail: string,
+  eventId: string,
+  expectedDateIso?: string
+): Promise<CalendarVerifyCheck> {
+  try {
+    const auth = getAuthForUser(userEmail);
+    const calendar = google.calendar({ version: "v3", auth });
+    const res = await calendar.events.get({
+      calendarId: "primary",
+      eventId,
+    });
+    const summary = res.data.summary ?? "";
+    const startRaw =
+      res.data.start?.date ?? res.data.start?.dateTime?.slice(0, 10) ?? undefined;
+    const startDate = startRaw?.slice(0, 10);
+    let ok = true;
+    let error: string | undefined;
+    if (expectedDateIso && startDate && startDate !== expectedDateIso.slice(0, 10)) {
+      ok = false;
+      error = `Date mismatch (Google: ${startDate}, DocketFlow: ${expectedDateIso})`;
+    }
+    return {
+      email: userEmail,
+      ok,
+      summary,
+      startDate,
+      error,
+    };
+  } catch (e) {
+    return {
+      email: userEmail,
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
