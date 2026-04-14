@@ -64,35 +64,44 @@ export async function GET(req: Request): Promise<Response> {
         const daysUntil = differenceInCalendarDays(parseISO(eventDate), parseISO(today));
         if (daysUntil < 0) continue; // past events
 
+        // Due = we're on or past that reminder's lead time (supports missed cron days).
+        // Only fire ONE tier per run — the tightest lead not yet sent — otherwise e.g. 1 day out
+        // matches 28d, 14d, 7d, and 1d and everyone gets 4 duplicate emails.
+        type Tier = { minutes: number; reminderDays: number };
+        const dueTiers: Tier[] = [];
         for (const minutes of remindersMinutes) {
           if (alreadySent.includes(minutes)) continue;
-
           const reminderDays = Math.floor(minutes / 1440);
-          if (daysUntil > reminderDays) continue; // not yet time
-
-          // This reminder is due today — send to all attendees
-          for (const email of attendeeEmails) {
-            try {
-              await sendReminderEmail({
-                to: email,
-                caseName,
-                eventTitle: ev.title as string,
-                eventDate,
-                daysUntil,
-                category,
-              });
-              sent++;
-            } catch (err) {
-              console.error("[cron] Failed to email", email, ":", err);
-            }
-          }
-
-          // Mark this reminder as sent
-          await eventDoc.ref.update({
-            emailRemindersSent: [...alreadySent, minutes],
-          });
-          alreadySent.push(minutes);
+          if (reminderDays <= 0) continue;
+          if (daysUntil > reminderDays) continue;
+          dueTiers.push({ minutes, reminderDays });
         }
+        if (dueTiers.length === 0) {
+          skipped++;
+          continue;
+        }
+        dueTiers.sort((a, b) => a.reminderDays - b.reminderDays);
+        const { minutes: dueMinutes } = dueTiers[0]!;
+
+        for (const email of attendeeEmails) {
+          try {
+            await sendReminderEmail({
+              to: email,
+              caseName,
+              eventTitle: ev.title as string,
+              eventDate,
+              daysUntil,
+              category,
+            });
+            sent++;
+          } catch (err) {
+            console.error("[cron] Failed to email", email, ":", err);
+          }
+        }
+
+        await eventDoc.ref.update({
+          emailRemindersSent: [...alreadySent, dueMinutes],
+        });
 
         skipped++;
       }
