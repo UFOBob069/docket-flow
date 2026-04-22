@@ -33,52 +33,121 @@ function buildOverrides(minutes: number[]) {
     .map((m) => ({ method: "popup" as const, minutes: m }));
 }
 
+const DEFAULT_TZ = "America/Chicago";
+
 type EventPayload = {
   summary: string;
   description: string;
-  dateIso: string;
   reminderMinutes: number[];
+  /** All-day (YYYY-MM-DD) — omit when using timed */
+  dateIso?: string;
+  startDateTime?: string;
+  endDateTime?: string;
+  /** Zoom / meet link — surfaces prominently in Google Calendar */
+  location?: string;
+  timeZone?: string;
 };
+
+function isTimedPayload(params: EventPayload): boolean {
+  return Boolean(params.startDateTime);
+}
+
+function buildInsertRequestBody(params: EventPayload): Record<string, unknown> {
+  const overrides = buildOverrides(params.reminderMinutes);
+  const tz = params.timeZone ?? DEFAULT_TZ;
+
+  if (isTimedPayload(params) && params.startDateTime) {
+    const end =
+      params.endDateTime ??
+      (() => {
+        const d = new Date(params.startDateTime!);
+        d.setHours(d.getHours() + 1);
+        return d.toISOString();
+      })();
+    return {
+      summary: params.summary,
+      description: params.description,
+      start: { dateTime: params.startDateTime, timeZone: tz },
+      end: { dateTime: end, timeZone: tz },
+      reminders: { useDefault: false, overrides },
+      ...(params.location?.trim() ? { location: params.location.trim() } : {}),
+    };
+  }
+  const day = params.dateIso ?? params.startDateTime?.slice(0, 10) ?? "";
+  return {
+    summary: params.summary,
+    description: params.description,
+    start: { date: day },
+    end: { date: day },
+    reminders: { useDefault: false, overrides },
+    ...(params.location?.trim() ? { location: params.location.trim() } : {}),
+  };
+}
+
+async function insertCalendarEventOnCalendar(
+  userEmail: string,
+  calendarId: string,
+  params: EventPayload
+): Promise<string> {
+  const auth = getAuthForUser(userEmail);
+  const calendar = google.calendar({ version: "v3", auth });
+  const requestBody = buildInsertRequestBody(params);
+  const res = await calendar.events.insert({
+    calendarId,
+    requestBody: requestBody as Record<string, unknown>,
+  });
+  return res.data.id ?? "";
+}
 
 async function insertCalendarEventForUser(
   userEmail: string,
   params: EventPayload
 ): Promise<string> {
-  const auth = getAuthForUser(userEmail);
-  const calendar = google.calendar({ version: "v3", auth });
-  const overrides = buildOverrides(params.reminderMinutes);
-  const res = await calendar.events.insert({
-    calendarId: "primary",
-    requestBody: {
-      summary: params.summary,
-      description: params.description,
-      start: { date: params.dateIso },
-      end: { date: params.dateIso },
-      reminders: { useDefault: false, overrides },
-    },
-  });
-  return res.data.id ?? "";
+  return insertCalendarEventOnCalendar(userEmail, "primary", params);
 }
 
 async function deleteCalendarEventForUser(
   userEmail: string,
   eventId: string
 ): Promise<void> {
+  await deleteCalendarEventOnCalendar(userEmail, "primary", eventId);
+}
+
+async function deleteCalendarEventOnCalendar(
+  userEmail: string,
+  calendarId: string,
+  eventId: string
+): Promise<void> {
   const auth = getAuthForUser(userEmail);
   const calendar = google.calendar({ version: "v3", auth });
-  await calendar.events.delete({ calendarId: "primary", eventId });
+  await calendar.events.delete({ calendarId, eventId });
 }
 
 function buildPatchBody(params: {
   summary?: string;
   description?: string;
   dateIso?: string;
+  startDateTime?: string;
+  endDateTime?: string;
   reminderMinutes?: number[];
+  location?: string | null;
 }): Record<string, unknown> {
   const body: Record<string, unknown> = {};
   if (params.summary !== undefined) body.summary = params.summary;
   if (params.description !== undefined) body.description = params.description;
-  if (params.dateIso !== undefined) {
+  if (params.location !== undefined) body.location = params.location || "";
+  if (params.startDateTime) {
+    const tz = DEFAULT_TZ;
+    const end =
+      params.endDateTime ??
+      (() => {
+        const d = new Date(params.startDateTime!);
+        d.setHours(d.getHours() + 1);
+        return d.toISOString();
+      })();
+    body.start = { dateTime: params.startDateTime, timeZone: tz };
+    body.end = { dateTime: end, timeZone: tz };
+  } else if (params.dateIso !== undefined) {
     body.start = { date: params.dateIso };
     body.end = { date: params.dateIso };
   }
@@ -91,8 +160,9 @@ function buildPatchBody(params: {
   return body;
 }
 
-async function patchCalendarEventForUser(
+async function patchCalendarEventOnCalendar(
   userEmail: string,
+  calendarId: string,
   eventId: string,
   patchBody: Record<string, unknown>
 ): Promise<void> {
@@ -100,10 +170,18 @@ async function patchCalendarEventForUser(
   const auth = getAuthForUser(userEmail);
   const calendar = google.calendar({ version: "v3", auth });
   await calendar.events.patch({
-    calendarId: "primary",
+    calendarId,
     eventId,
     requestBody: patchBody,
   });
+}
+
+async function patchCalendarEventForUser(
+  userEmail: string,
+  eventId: string,
+  patchBody: Record<string, unknown>
+): Promise<void> {
+  await patchCalendarEventOnCalendar(userEmail, "primary", eventId, patchBody);
 }
 
 /**
@@ -116,13 +194,19 @@ export async function insertGoogleEvent(params: {
   dateIso: string;
   attendeeEmails: string[];
   reminderMinutes: number[];
+  startDateTime?: string | null;
+  endDateTime?: string | null;
+  location?: string | null;
 }): Promise<{ organizerEventId: string; idsByEmail: Record<string, string> }> {
   const defaultUser = getDefaultUser();
   const payload: EventPayload = {
     summary: params.summary,
     description: params.description,
-    dateIso: params.dateIso,
     reminderMinutes: params.reminderMinutes,
+    dateIso: params.startDateTime ? undefined : params.dateIso,
+    startDateTime: params.startDateTime ?? undefined,
+    endDateTime: params.endDateTime ?? undefined,
+    location: params.location?.trim() || undefined,
   };
 
   const allRecipients = Array.from(
@@ -159,7 +243,10 @@ export async function patchGoogleEvent(params: {
   summary?: string;
   description?: string;
   dateIso?: string;
+  startDateTime?: string;
+  endDateTime?: string;
   reminderMinutes?: number[];
+  location?: string | null;
 }): Promise<void> {
   const patchBody = buildPatchBody(params);
   if (Object.keys(patchBody).length === 0) return;
@@ -209,6 +296,9 @@ export async function reconcileCalendarEventTeam(params: {
   dateIso: string;
   reminderMinutes: number[];
   attendeeEmails: string[];
+  startDateTime?: string;
+  endDateTime?: string;
+  location?: string | null;
   /** Prior map (may be partial for legacy events) */
   idsByEmail?: Record<string, string>;
   /** Legacy single id on organizer calendar only */
@@ -234,8 +324,11 @@ export async function reconcileCalendarEventTeam(params: {
   const payload: EventPayload = {
     summary: params.summary,
     description: params.description,
-    dateIso: params.dateIso,
     reminderMinutes: params.reminderMinutes,
+    dateIso: params.startDateTime ? undefined : params.dateIso,
+    startDateTime: params.startDateTime,
+    endDateTime: params.endDateTime,
+    location: params.location?.trim() || undefined,
   };
 
   for (const el of [...Object.keys(oldMap)]) {
@@ -294,6 +387,116 @@ export type CalendarVerifyCheck = {
   error?: string;
 };
 
+/** Default firm SOL group calendar (only used when env is unset in non-production). */
+const DEV_SOL_MILESTONE_CALENDAR_ID =
+  "c_fdf8d70155c50c02fecf733cc8a2aeed08abc04e835166f638bac7db4d37eb1c@group.calendar.google.com";
+const DEV_SOL_MILESTONE_IMPERSONATE_EMAIL = "legalassistant@ramosjames.com";
+
+/** Shared firm calendar for SOL lead-up milestones (group calendar id + impersonated user). */
+export function getSolMilestoneCalendarConfig(): {
+  calendarId: string;
+  impersonateEmail: string;
+} | null {
+  const fromEnvCal = process.env.GOOGLE_SOL_MILESTONE_CALENDAR_ID?.trim();
+  const fromEnvImpersonate = process.env.GOOGLE_SOL_MILESTONE_IMPERSONATE_EMAIL?.trim();
+
+  const allowDevFallback = process.env.NODE_ENV !== "production";
+  const calendarId =
+    fromEnvCal || (allowDevFallback ? DEV_SOL_MILESTONE_CALENDAR_ID : "");
+  const impersonateEmail =
+    fromEnvImpersonate || (allowDevFallback ? DEV_SOL_MILESTONE_IMPERSONATE_EMAIL : "");
+
+  if (!calendarId || !impersonateEmail) return null;
+  return { calendarId, impersonateEmail };
+}
+
+export function isConfiguredSolHostCalendarId(calendarId: string | undefined): boolean {
+  const cfg = getSolMilestoneCalendarConfig();
+  return Boolean(cfg && calendarId && calendarId === cfg.calendarId);
+}
+
+export async function insertSolMilestonesOnConfiguredCalendar(params: {
+  caseName: string;
+  sourceLabel?: string;
+  milestones: {
+    title: string;
+    date: string;
+    description: string;
+    reminderMinutes: number[];
+    /** When set, Google summary is `{stem} - {caseName}` (firm SOL calendar) */
+    googleSummaryStem?: string;
+  }[];
+}): Promise<{ googleEventIds: string[]; hostCalendarId: string }> {
+  const cfg = getSolMilestoneCalendarConfig();
+  if (!cfg) {
+    throw new Error(
+      "Set GOOGLE_SOL_MILESTONE_CALENDAR_ID and GOOGLE_SOL_MILESTONE_IMPERSONATE_EMAIL for SOL milestones"
+    );
+  }
+  const caseNameTrim = params.caseName.trim();
+  const googleEventIds: string[] = [];
+  for (const m of params.milestones) {
+    let description = m.description;
+    if (params.sourceLabel) {
+      description = `Source: ${params.sourceLabel}\n\n${description}`;
+    }
+    const summary = m.googleSummaryStem?.trim()
+      ? `${m.googleSummaryStem.trim()} - ${caseNameTrim}`
+      : `${params.caseName} – ${m.title}`;
+    const id = await insertCalendarEventOnCalendar(cfg.impersonateEmail, cfg.calendarId, {
+      summary,
+      description,
+      reminderMinutes: m.reminderMinutes,
+      dateIso: m.date,
+    });
+    googleEventIds.push(id);
+  }
+  return { googleEventIds, hostCalendarId: cfg.calendarId };
+}
+
+export async function patchSolMilestoneGoogleEvent(params: {
+  claimedHostCalendarId: string | undefined;
+  googleEventId: string;
+  summary: string;
+  description: string;
+  dateIso?: string;
+  startDateTime?: string;
+  endDateTime?: string;
+  reminderMinutes?: number[];
+  location?: string | null;
+}): Promise<void> {
+  if (!isConfiguredSolHostCalendarId(params.claimedHostCalendarId)) {
+    throw new Error("Invalid host calendar for SOL milestone update");
+  }
+  const cfg = getSolMilestoneCalendarConfig()!;
+  const patchBody = buildPatchBody({
+    summary: params.summary,
+    description: params.description,
+    dateIso: params.dateIso,
+    startDateTime: params.startDateTime,
+    endDateTime: params.endDateTime,
+    reminderMinutes: params.reminderMinutes,
+    location: params.location,
+  });
+  await patchCalendarEventOnCalendar(
+    cfg.impersonateEmail,
+    cfg.calendarId,
+    params.googleEventId,
+    patchBody
+  );
+}
+
+export async function deleteSolMilestoneGoogleEvent(
+  googleEventId: string,
+  claimedHostCalendarId: string | undefined
+): Promise<void> {
+  if (!isConfiguredSolHostCalendarId(claimedHostCalendarId)) {
+    throw new Error("Invalid host calendar for SOL milestone delete");
+  }
+  const cfg = getSolMilestoneCalendarConfig()!;
+  await deleteCalendarEventOnCalendar(cfg.impersonateEmail, cfg.calendarId, googleEventId);
+}
+
 /** Confirm `events.get` succeeds for this user’s primary calendar (DWD impersonation). */
 export async function verifyGoogleEventCopy(
   userEmail: string,
@@ -327,6 +530,46 @@ export async function verifyGoogleEventCopy(
   } catch (e) {
     return {
       email: userEmail,
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
+/** Verify an event on a specific calendar (e.g. firm SOL group calendar). */
+export async function verifyGoogleEventOnCalendar(
+  impersonateEmail: string,
+  calendarId: string,
+  eventId: string,
+  expectedDateIso?: string
+): Promise<CalendarVerifyCheck> {
+  try {
+    const auth = getAuthForUser(impersonateEmail);
+    const calendar = google.calendar({ version: "v3", auth });
+    const res = await calendar.events.get({
+      calendarId,
+      eventId,
+    });
+    const summary = res.data.summary ?? "";
+    const startRaw =
+      res.data.start?.date ?? res.data.start?.dateTime?.slice(0, 10) ?? undefined;
+    const startDate = startRaw?.slice(0, 10);
+    let ok = true;
+    let error: string | undefined;
+    if (expectedDateIso && startDate && startDate !== expectedDateIso.slice(0, 10)) {
+      ok = false;
+      error = `Date mismatch (Google: ${startDate}, DocketFlow: ${expectedDateIso})`;
+    }
+    return {
+      email: `${impersonateEmail} (${calendarId.slice(0, 12)}…)`,
+      ok,
+      summary,
+      startDate,
+      error,
+    };
+  } catch (e) {
+    return {
+      email: impersonateEmail,
       ok: false,
       error: e instanceof Error ? e.message : String(e),
     };

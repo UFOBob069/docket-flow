@@ -3,14 +3,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
-import { getDb } from "@/lib/firebase/client";
-import { isFirebaseConfigured } from "@/lib/firebase/config";
+import { isSupabaseConfigured } from "@/lib/supabase/config";
+import { getBrowserSupabase } from "@/lib/supabase/singleton";
 import {
   addContact,
   deleteContact,
   subscribeContacts,
   updateContact,
-} from "@/lib/firestore/repo";
+} from "@/lib/supabase/repo";
 import type { Contact, ContactRole } from "@/lib/types";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { useHydrated } from "@/hooks/useHydrated";
@@ -47,7 +47,7 @@ const roleBadge: Record<ContactRole, "primary" | "success" | "pink" | "default">
 export default function ContactsPage() {
   const router = useRouter();
   const hydrated = useHydrated();
-  const { user, loading, firebaseReady } = useAuth();
+  const { user, loading, supabaseReady } = useAuth();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -56,15 +56,15 @@ export default function ContactsPage() {
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!firebaseReady || loading || !user) return;
-    const db = getDb();
-    const unsub = subscribeContacts(db, setContacts);
+    if (!supabaseReady || loading || !user) return;
+    const supabase = getBrowserSupabase();
+    const unsub = subscribeContacts(supabase, user.id, setContacts);
     return () => unsub();
-  }, [user, loading, firebaseReady]);
+  }, [user, loading, supabaseReady]);
 
   useEffect(() => {
-    if (!loading && firebaseReady && !user) router.replace("/login");
-  }, [user, loading, firebaseReady, router]);
+    if (!loading && supabaseReady && !user) router.replace("/login");
+  }, [user, loading, supabaseReady, router]);
 
   const sorted = useMemo(
     () => [...contacts].sort((a, b) => a.name.localeCompare(b.name)),
@@ -79,8 +79,8 @@ export default function ContactsPage() {
     setErr(null);
     setSaving(true);
     try {
-      const db = getDb();
-      await addContact(db, user.uid, { name, email, role });
+      const supabase = getBrowserSupabase();
+      await addContact(supabase, user.id, { name, email, role });
       setName("");
       setEmail("");
       setRole("paralegal");
@@ -92,20 +92,20 @@ export default function ContactsPage() {
   }
 
   async function onRoleChange(c: Contact, r: ContactRole) {
-    const db = getDb();
-    await updateContact(db, c.id, { role: r });
+    const supabase = getBrowserSupabase();
+    await updateContact(supabase, c.id, { role: r });
   }
 
   async function onDelete(c: Contact) {
     if (!confirm(`Delete ${c.name}?`)) return;
-    const db = getDb();
-    await deleteContact(db, c.id);
+    const supabase = getBrowserSupabase();
+    await deleteContact(supabase, c.id);
   }
 
-  if (!isFirebaseConfigured()) {
+  if (!isSupabaseConfigured()) {
     return (
       <PageWrapper>
-        <p className="text-text-muted">Configure Firebase to manage contacts.</p>
+        <p className="text-text-muted">Configure Supabase to manage contacts.</p>
       </PageWrapper>
     );
   }

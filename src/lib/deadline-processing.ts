@@ -114,6 +114,7 @@ export function extractedToCalendarEvents(
       title: row.title?.trim() || "Deadline",
       date: row.date,
       description: row.description?.trim() ?? "",
+      eventKind: "aso_dco" as const,
       category,
       priority: parsePriority(row.priority),
       included: !noise,

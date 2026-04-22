@@ -3,13 +3,14 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth, userAvatarUrl, userDisplayName } from "@/context/AuthContext";
 import { useState } from "react";
 
 const FIRM_LOGO_PATH = "/firm-logo.webp";
 
 const navLinks = [
   { href: "/", label: "Dashboard", match: (p: string) => p === "/" },
+  { href: "/calendar", label: "Calendar", match: (p: string) => p.startsWith("/calendar") },
   {
     href: "/cases",
     label: "Cases",
@@ -21,8 +22,9 @@ const navLinks = [
 
 export function NavBar() {
   const pathname = usePathname();
-  const { user, logout, firebaseReady, loading } = useAuth();
+  const { user, logout, supabaseReady, loading } = useAuth();
   const [logoError, setLogoError] = useState(false);
+  const avatarSrc = user ? userAvatarUrl(user) : undefined;
 
   return (
     <header className="sticky top-0 z-40 border-b border-white/10 bg-navy shadow-lg shadow-navy-deep/40">
@@ -70,21 +72,21 @@ export function NavBar() {
 
           <div className="ml-4 h-5 w-px bg-white/15" />
 
-          {!loading && firebaseReady && (
+          {!loading && supabaseReady && (
             <div className="ml-3 flex items-center gap-3">
               {user ? (
                 <>
-                  {user.photoURL && (
+                  {avatarSrc && (
                     /* eslint-disable-next-line @next/next/no-img-element */
                     <img
-                      src={user.photoURL}
+                      src={avatarSrc}
                       alt=""
                       className="h-7 w-7 rounded-full ring-2 ring-white/20"
                       referrerPolicy="no-referrer"
                     />
                   )}
                   <span className="hidden text-xs text-white/70 sm:inline">
-                    {user.displayName ?? user.email}
+                    {userDisplayName(user) || user.email}
                   </span>
                   <button
                     type="button"

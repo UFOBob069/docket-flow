@@ -7,7 +7,7 @@ const pdfParse = require("pdf-parse/lib/pdf-parse.js") as (
 ) => Promise<{ text: string }>;
 import { DEADLINE_SYSTEM_PROMPT } from "@/lib/llm-prompt";
 import type { ExtractedDeadline } from "@/lib/types";
-import { verifyIdToken } from "@/lib/firebase/admin";
+import { getUserFromBearer } from "@/lib/supabase/auth-server";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -64,7 +64,7 @@ function parseDeadlinesJson(raw: string): ExtractedDeadline[] {
 }
 
 export async function POST(req: Request): Promise<Response> {
-  const session = await verifyIdToken(req.headers.get("authorization"));
+  const session = await getUserFromBearer(req.headers.get("authorization"));
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

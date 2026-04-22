@@ -9,6 +9,40 @@ export type EventCategory =
   | "pretrial"
   | "other";
 
+/**
+ * Case-centric calendar kinds. Legacy DB values (`trial_deposition`, `client_call`) are kept
+ * for existing rows; new events use the topic/subtopic kinds below.
+ */
+export type EventKind =
+  | "sol"
+  | "sol_milestone"
+  | "aso_dco"
+  /* Court / Legal */
+  | "hearing"
+  | "trial"
+  | "mediation"
+  | "deposition"
+  | "court_appearance"
+  /* Deadlines */
+  | "filing_deadline"
+  | "discovery_deadline"
+  | "demand_response"
+  /* Client / Communication */
+  | "client_meeting"
+  /* Internal */
+  | "attorney_review"
+  | "case_strategy"
+  | "internal_meeting"
+  | "document_review"
+  /* Prep */
+  | "depo_prep"
+  | "mediation_prep"
+  | "trial_prep"
+  | "other_event"
+  /* Legacy */
+  | "trial_deposition"
+  | "client_call";
+
 export type ContactRole = "attorney" | "paralegal" | "legal_assistant" | "other";
 
 export interface Contact {
@@ -24,10 +58,18 @@ export interface Contact {
 export interface Case {
   id: string;
   ownerId: string;
+  /** Short label — prefer {@link caseDisplayName} for UI */
   name: string;
   clientName: string;
+  /** Firm case number (required on new cases) */
+  caseNumber?: string | null;
+  /** @deprecated use caseNumber; kept for legacy data */
   causeNumber?: string | null;
   court?: string | null;
+  /** ISO date YYYY-MM-DD */
+  dateOfIncident?: string | null;
+  notes?: string | null;
+  caseType?: string | null;
   status: CaseStatus;
   documentUrl?: string;
   documentFileName?: string;
@@ -41,24 +83,34 @@ export interface CalendarEvent {
   caseId: string;
   ownerId: string;
   title: string;
+  /** Calendar day for sorting / all-day events (YYYY-MM-DD) */
   date: string;
   description: string;
   category: EventCategory;
+  eventKind?: EventKind;
+  /** Timed events (depositions, calls, etc.) — ISO datetime */
+  startDateTime?: string | null;
+  endDateTime?: string | null;
+  /** Deposition: who is being deposed; other kinds: short subject label */
+  deponentOrSubject?: string | null;
+  /** Free text for external attendees / parties */
+  externalAttendeesText?: string | null;
+  /** Additional internal people beyond case-level assignees */
+  extraInternalContactIds?: string[];
+  zoomLink?: string | null;
   priority?: "high" | "medium" | "low";
   googleEventId?: string;
-  /** Lowercased email → Google event id on that user's primary calendar (for patch/delete/reassign across the team) */
+  /** Lowercased email → Google event id on that user's primary calendar */
   googleCalendarEventIdsByEmail?: Record<string, string>;
+  /** When set, {@link googleEventId} lives on this shared calendar (SOL milestones), not primary */
+  googleHostCalendarId?: string;
   included: boolean;
-  /** Suggested merge with other same-day items */
   groupSuggested: boolean;
-  /** Group id for UI merge (ephemeral until merged) */
   groupId?: string;
-  /** When true with others sharing groupId, one Google event is created */
   mergeWithSameGroup?: boolean;
   noiseFlag: boolean;
   noiseReason?: string;
   remindersMinutes: number[];
-  /** Tracks which email reminders have already been sent (minutes values) */
   emailRemindersSent?: number[];
   createdAt: number;
   updatedAt: number;
@@ -86,7 +138,6 @@ export interface ActivityEntry {
   createdAt: number;
 }
 
-/** LLM raw row before smart processing */
 export interface ExtractedDeadline {
   date: string;
   title: string;

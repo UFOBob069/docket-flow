@@ -9,9 +9,9 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.10.2",
+    "@supabase/supabase-js": "^2.103.3",
     "date-fns": "^4.1.0",
-    "firebase": "^12.11.0",
-    "firebase-admin": "^13.7.0",
     "googleapis": "^171.4.0",
     "mammoth": "^1.12.0",
     "next": "16.2.2",

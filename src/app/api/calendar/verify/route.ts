@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import {
+  getSolMilestoneCalendarConfig,
   idsByEmailForVerification,
+  isConfiguredSolHostCalendarId,
   verifyGoogleEventCopy,
+  verifyGoogleEventOnCalendar,
 } from "@/lib/google-calendar";
-import { verifyIdToken } from "@/lib/firebase/admin";
+import { getUserFromBearer } from "@/lib/supabase/auth-server";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -14,11 +17,12 @@ type Body = {
     date: string;
     googleEventId?: string;
     googleCalendarEventIdsByEmail?: Record<string, string>;
+    googleHostCalendarId?: string;
   }[];
 };
 
 export async function POST(req: Request): Promise<Response> {
-  const session = await verifyIdToken(req.headers.get("authorization"));
+  const session = await getUserFromBearer(req.headers.get("authorization"));
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -40,6 +44,37 @@ export async function POST(req: Request): Promise<Response> {
     }[] = [];
 
     for (const ev of body.events) {
+      if (
+        ev.googleEventId &&
+        isConfiguredSolHostCalendarId(ev.googleHostCalendarId)
+      ) {
+        const cfg = getSolMilestoneCalendarConfig();
+        if (!cfg) {
+          results.push({
+            title: ev.title,
+            date: ev.date,
+            checks: [
+              {
+                email: "SOL host calendar",
+                ok: false,
+                error: "GOOGLE_SOL_MILESTONE_CALENDAR_ID not configured",
+              },
+            ],
+          });
+          continue;
+        }
+        const checks = [
+          await verifyGoogleEventOnCalendar(
+            cfg.impersonateEmail,
+            cfg.calendarId,
+            ev.googleEventId,
+            ev.date
+          ),
+        ];
+        results.push({ title: ev.title, date: ev.date, checks });
+        continue;
+      }
+
       const map = idsByEmailForVerification(
         ev.googleCalendarEventIdsByEmail,
         ev.googleEventId

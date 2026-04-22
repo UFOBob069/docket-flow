@@ -5,9 +5,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { differenceInCalendarDays, parseISO, format, formatDistanceToNow } from "date-fns";
 import { useAuth } from "@/context/AuthContext";
-import { getDb } from "@/lib/firebase/client";
-import { isFirebaseConfigured } from "@/lib/firebase/config";
-import { fetchCasesWithEvents, subscribeActivity } from "@/lib/firestore/repo";
+import { isSupabaseConfigured } from "@/lib/supabase/config";
+import { getBrowserSupabase } from "@/lib/supabase/singleton";
+import { fetchCasesWithEvents, subscribeActivity } from "@/lib/supabase/repo";
 import type { ActivityEntry, CalendarEvent, Case } from "@/lib/types";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { useHydrated } from "@/hooks/useHydrated";
@@ -157,7 +157,7 @@ function StatCard({ label, value, accent }: { label: string; value: number; acce
 export default function DashboardPage() {
   const router = useRouter();
   const hydrated = useHydrated();
-  const { user, loading, idToken, firebaseReady } = useAuth();
+  const { user, loading, idToken, supabaseReady } = useAuth();
   const [rows, setRows] = useState<Row[]>([]);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [caseCount, setCaseCount] = useState(0);
@@ -165,15 +165,15 @@ export default function DashboardPage() {
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
-    if (!firebaseReady || loading) return;
+    if (!supabaseReady || loading) return;
     if (!user) { router.replace("/login"); return; }
     let cancelled = false;
     (async () => {
       setRefreshing(true);
       setLoadError(null);
       try {
-        const db = getDb();
-        const bundled = await fetchCasesWithEvents(db);
+        const supabase = getBrowserSupabase();
+        const bundled = await fetchCasesWithEvents(supabase, user.id);
         const flat: Row[] = [];
         const t = todayIso();
         let activeCases = 0;
@@ -196,13 +196,13 @@ export default function DashboardPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [user, loading, firebaseReady, router, idToken]);
+  }, [user, loading, supabaseReady, router, idToken]);
 
   useEffect(() => {
-    if (!firebaseReady || loading || !user) return;
-    const db = getDb();
-    return subscribeActivity(db, 20, setActivity);
-  }, [user, loading, firebaseReady]);
+    if (!supabaseReady || loading || !user) return;
+    const supabase = getBrowserSupabase();
+    return subscribeActivity(supabase, user.id, 20, setActivity);
+  }, [user, loading, supabaseReady]);
 
   const today = todayIso();
   const grouped = useMemo(() => {
@@ -216,13 +216,14 @@ export default function DashboardPage() {
 
   if (!hydrated) return <PageSkeleton />;
 
-  if (!isFirebaseConfigured()) {
+  if (!isSupabaseConfigured()) {
     return (
       <PageWrapper>
         <h1 className="text-3xl font-semibold">DocketFlow</h1>
         <p className="mt-3 text-text-muted">
-          Add Firebase keys to <code className="rounded bg-surface-alt px-1.5 py-0.5 text-sm font-mono text-primary">.env.local</code> to
-          run the app.
+          Add <code className="rounded bg-surface-alt px-1.5 py-0.5 text-sm font-mono text-primary">NEXT_PUBLIC_SUPABASE_URL</code> and{" "}
+          <code className="rounded bg-surface-alt px-1.5 py-0.5 text-sm font-mono text-primary">NEXT_PUBLIC_SUPABASE_ANON_KEY</code> to{" "}
+          <code className="rounded bg-surface-alt px-1.5 py-0.5 text-sm font-mono text-primary">.env.local</code> to run the app.
         </p>
       </PageWrapper>
     );

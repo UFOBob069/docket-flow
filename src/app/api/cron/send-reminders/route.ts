@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { getFirestore } from "firebase-admin/firestore";
-import { initAdmin } from "@/lib/firebase/admin";
+import { createServiceRoleClient } from "@/lib/supabase/service";
 import { sendReminderEmail } from "@/lib/gmail";
 import { differenceInCalendarDays, parseISO } from "date-fns";
 
@@ -12,61 +11,65 @@ function todayIso(): string {
 }
 
 export async function GET(req: Request): Promise<Response> {
-  // Verify cron secret (Vercel sets this header for cron jobs)
   const authHeader = req.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
   if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const supabase = createServiceRoleClient();
+  if (!supabase) {
+    return NextResponse.json(
+      { error: "SUPABASE_SERVICE_ROLE_KEY not configured" },
+      { status: 503 }
+    );
+  }
+
   try {
-    initAdmin();
-    const db = getFirestore();
     const today = todayIso();
     let sent = 0;
     let skipped = 0;
 
-    // Get all active cases
-    const casesSnap = await db.collection("cases").where("status", "==", "active").get();
+    const { data: caseRows, error: casesErr } = await supabase
+      .from("cases")
+      .select("id, name, assigned_contact_ids")
+      .eq("status", "active");
+    if (casesErr) throw casesErr;
 
-    for (const caseDoc of casesSnap.docs) {
-      const caseData = caseDoc.data();
-      const caseName = caseData.name as string;
-      const assignedContactIds = (caseData.assignedContactIds ?? []) as string[];
+    for (const row of caseRows ?? []) {
+      const caseId = row.id as string;
+      const caseName = row.name as string;
+      const assignedContactIds = (row.assigned_contact_ids as string[]) ?? [];
 
-      // Get attendee emails from assigned contacts
       const attendeeEmails: string[] = [];
       for (const contactId of assignedContactIds) {
-        const contactSnap = await db.collection("contacts").doc(contactId).get();
-        if (contactSnap.exists) {
-          const email = contactSnap.data()?.email;
-          if (email) attendeeEmails.push(email);
-        }
+        const { data: contact } = await supabase
+          .from("contacts")
+          .select("email")
+          .eq("id", contactId)
+          .maybeSingle();
+        const email = contact?.email as string | undefined;
+        if (email) attendeeEmails.push(email);
       }
 
       if (!attendeeEmails.length) continue;
 
-      // Get events for this case
-      const eventsSnap = await db
-        .collection("cases")
-        .doc(caseDoc.id)
-        .collection("events")
-        .where("included", "==", true)
-        .get();
+      const { data: events, error: evErr } = await supabase
+        .from("case_events")
+        .select("*")
+        .eq("case_id", caseId)
+        .eq("included", true);
+      if (evErr) throw evErr;
 
-      for (const eventDoc of eventsSnap.docs) {
-        const ev = eventDoc.data();
+      for (const ev of events ?? []) {
         const eventDate = ev.date as string;
-        const remindersMinutes = (ev.remindersMinutes ?? []) as number[];
-        const alreadySent = (ev.emailRemindersSent ?? []) as number[];
-        const category = (ev.category ?? "other") as string;
+        const remindersMinutes = (ev.reminders_minutes as number[]) ?? [];
+        const alreadySent = (ev.email_reminders_sent as number[]) ?? [];
+        const category = (ev.category as string) ?? "other";
 
         const daysUntil = differenceInCalendarDays(parseISO(eventDate), parseISO(today));
-        if (daysUntil < 0) continue; // past events
+        if (daysUntil < 0) continue;
 
-        // Due = we're on or past that reminder's lead time (supports missed cron days).
-        // Only fire ONE tier per run — the tightest lead not yet sent — otherwise e.g. 1 day out
-        // matches 28d, 14d, 7d, and 1d and everyone gets 4 duplicate emails.
         type Tier = { minutes: number; reminderDays: number };
         const dueTiers: Tier[] = [];
         for (const minutes of remindersMinutes) {
@@ -99,9 +102,11 @@ export async function GET(req: Request): Promise<Response> {
           }
         }
 
-        await eventDoc.ref.update({
-          emailRemindersSent: [...alreadySent, dueMinutes],
-        });
+        await supabase
+          .from("case_events")
+          .update({ email_reminders_sent: [...alreadySent, dueMinutes] })
+          .eq("id", ev.id as string)
+          .eq("case_id", caseId);
 
         skipped++;
       }
