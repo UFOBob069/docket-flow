@@ -21,13 +21,6 @@ type AuthState = {
   supabaseReady: boolean;
   /** Opens Google OAuth; session returns via /auth/callback (PKCE). */
   signInWithGoogle: () => Promise<void>;
-  signInWithEmailPassword: (email: string, password: string) => Promise<void>;
-  signUpWithNameEmailPassword: (
-    fullName: string,
-    email: string,
-    password: string
-  ) => Promise<{ needsEmailConfirmation: boolean }>;
-  sendPasswordResetEmail: (email: string) => Promise<void>;
   logout: () => Promise<void>;
 };
 
@@ -35,20 +28,6 @@ const AuthContext = createContext<AuthState | null>(null);
 
 function emailDomain(email: string | null | undefined): string {
   return email?.split("@")[1]?.toLowerCase() ?? "";
-}
-
-function normalizeEmail(email: string): string {
-  return email.trim().toLowerCase();
-}
-
-function assertAllowedEmail(email: string): void {
-  const e = normalizeEmail(email);
-  if (!e || !e.includes("@")) {
-    throw new Error("Enter a valid email address.");
-  }
-  if (emailDomain(e) !== ALLOWED_DOMAIN) {
-    throw new Error(`Only @${ALLOWED_DOMAIN} addresses can access DocketFlow.`);
-  }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -132,61 +111,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw new Error(
           "Google sign-in did not return a redirect URL. Enable the Google provider in Supabase and confirm redirect URLs include /auth/callback for this app."
         );
-      },
-      signInWithEmailPassword: async (rawEmail: string, password: string) => {
-        if (!isSupabaseConfigured()) {
-          throw new Error("Supabase is not configured");
-        }
-        assertAllowedEmail(rawEmail);
-        const email = normalizeEmail(rawEmail);
-        const supabase = createSupabaseBrowserClient();
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-        if (error) throw error;
-      },
-      signUpWithNameEmailPassword: async (
-        fullName: string,
-        rawEmail: string,
-        password: string
-      ) => {
-        if (!isSupabaseConfigured()) {
-          throw new Error("Supabase is not configured");
-        }
-        const name = fullName.trim();
-        if (!name) throw new Error("Enter your name.");
-        assertAllowedEmail(rawEmail);
-        const email = normalizeEmail(rawEmail);
-        if (password.length < 8) {
-          throw new Error("Password must be at least 8 characters.");
-        }
-        const supabase = createSupabaseBrowserClient();
-        const emailRedirectTo = `${window.location.origin}/auth/callback`;
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            emailRedirectTo,
-            data: { full_name: name },
-          },
-        });
-        if (error) throw error;
-        const needsEmailConfirmation = !data.session;
-        return { needsEmailConfirmation };
-      },
-      sendPasswordResetEmail: async (rawEmail: string) => {
-        if (!isSupabaseConfigured()) {
-          throw new Error("Supabase is not configured");
-        }
-        assertAllowedEmail(rawEmail);
-        const email = normalizeEmail(rawEmail);
-        const supabase = createSupabaseBrowserClient();
-        const redirectTo = `${window.location.origin}/auth/update-password`;
-        const { error } = await supabase.auth.resetPasswordForEmail(email, {
-          redirectTo,
-        });
-        if (error) throw error;
       },
       logout: async () => {
         if (!isSupabaseConfigured()) return;
