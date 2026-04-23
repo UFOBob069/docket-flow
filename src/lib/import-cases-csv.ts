@@ -34,9 +34,13 @@ const HEADER_ALIASES: Record<string, keyof CsvColumnMap> = {
   attorney_email: "attorneyEmail",
   attorney: "attorneyEmail",
   attorneyemail: "attorneyEmail",
+  attorney_name: "attorneyEmail",
+  attorneyname: "attorneyEmail",
   paralegal_email: "paralegalEmail",
   paralegal: "paralegalEmail",
   paralegalemail: "paralegalEmail",
+  paralegal_name: "paralegalEmail",
+  paralegalname: "paralegalEmail",
 };
 
 type CsvColumnMap = {
@@ -82,12 +86,16 @@ function normalizeIncidentDate(s: string): string | null {
   return null;
 }
 
+function normName(s: string): string {
+  return s.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
 function resolveContactId(
   value: string,
   role: "attorney" | "paralegal",
   contacts: Contact[]
 ): { id: string } | { error: string } {
-  const v = value.trim();
+  const v = value.trim().replace(/\s+/g, " ");
   if (!v) return { error: "empty" };
   const pool = contacts.filter((c) => c.role === role);
   const lower = v.toLowerCase();
@@ -96,12 +104,26 @@ function resolveContactId(
     if (!c) return { error: `No ${role} with email ${v}` };
     return { id: c.id };
   }
-  const byName = pool.find((x) => x.name.trim().toLowerCase() === lower);
+  const vKey = normName(v);
+  const byName = pool.find((x) => normName(x.name) === vKey);
   if (byName) return { id: byName.id };
-  const partial = pool.filter((x) => x.name.toLowerCase().includes(lower) || lower.includes(x.name.toLowerCase()));
+  /** Try "Last, First" ↔ "First Last" if the CSV uses comma-separated names. */
+  if (v.includes(",")) {
+    const parts = v.split(",").map((p) => p.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      const swapped = `${parts.slice(1).join(" ")} ${parts[0]}`.trim();
+      const swappedKey = normName(swapped);
+      const bySwapped = pool.find((x) => normName(x.name) === swappedKey);
+      if (bySwapped) return { id: bySwapped.id };
+    }
+  }
+  const partial = pool.filter((x) => {
+    const nk = normName(x.name);
+    return nk.includes(vKey) || vKey.includes(nk);
+  });
   if (partial.length === 1) return { id: partial[0]!.id };
   if (partial.length > 1) {
-    return { error: `Multiple ${role}s match "${v}" — use email` };
+    return { error: `Multiple ${role}s match "${v}" — use email or full name as in Contacts` };
   }
   return { error: `No ${role} match for "${v}"` };
 }
@@ -109,6 +131,7 @@ function resolveContactId(
 /**
  * Parse a CSV for step 1 of ICS import. Required columns (headers flexible):
  * case number, client name, attorney (email or name), paralegal (email or name).
+ * Common headers: attorney_name, paralegal_name, attorney_email, paralegal_email, attorney, paralegal.
  * Optional: date_of_incident (YYYY-MM-DD or M/D/YYYY) if present.
  */
 export function parseCasesImportCsv(
@@ -133,7 +156,7 @@ export function parseCasesImportCsv(
     return {
       rows: [],
       errors: [
-        `Missing column(s): ${missing.join(", ")}. Required: case_number, client_name, attorney_email, paralegal_email (or attorney / paralegal with name or email). Optional: date_of_incident.`,
+        `Missing column(s): ${missing.join(", ")}. Required: case_number, client_name, plus attorney and paralegal columns (e.g. attorney_name & paralegal_name, or attorney_email & paralegal_email, or attorney / paralegal). Values must match Contacts (name or email). Optional: date_of_incident.`,
       ],
     };
   }
@@ -189,5 +212,5 @@ export function parseCasesImportCsv(
   return { rows, errors };
 }
 
-export const CASE_IMPORT_CSV_TEMPLATE = `case_number,client_name,attorney_email,paralegal_email
-12345-678,Jane Doe,lead@ramosjames.com,paralegal@ramosjames.com`;
+export const CASE_IMPORT_CSV_TEMPLATE = `case_number,client_name,attorney_name,paralegal_name
+12345-678,Jane Doe,Lead Attorney Name,Paralegal Name`;

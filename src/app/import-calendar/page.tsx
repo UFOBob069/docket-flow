@@ -112,7 +112,7 @@ export default function ImportCalendarPage() {
   async function onCasesCsvUpload(file: File | null) {
     if (!file) return;
     if (!contacts.length) {
-      setErr("Load contacts first, then upload a CSV with emails or names that match your Contacts list.");
+      setErr("Load contacts first, then upload a CSV — attorney and paralegal cells must match a name or email on your Contacts list.");
       return;
     }
     setErr(null);
@@ -385,8 +385,12 @@ export default function ImportCalendarPage() {
             <p className="mt-1 text-xs text-text-dim">
               Required: <span className="font-mono text-text-secondary">case_number</span>,{" "}
               <span className="font-mono text-text-secondary">client_name</span>,{" "}
-              <span className="font-mono text-text-secondary">attorney_email</span> (or attorney name),{" "}
-              <span className="font-mono text-text-secondary">paralegal_email</span> (or paralegal name). Optional:{" "}
+              <span className="font-mono text-text-secondary">attorney_name</span> /{" "}
+              <span className="font-mono text-text-secondary">paralegal_name</span> (or{" "}
+              <span className="font-mono text-text-secondary">attorney_email</span> /{" "}
+              <span className="font-mono text-text-secondary">paralegal_email</span>, or{" "}
+              <span className="font-mono text-text-secondary">attorney</span> /{" "}
+              <span className="font-mono text-text-secondary">paralegal</span>) — values must match Contacts. Optional:{" "}
               <span className="font-mono text-text-secondary">date_of_incident</span> (YYYY-MM-DD or M/D/YYYY). Headers
               can vary (e.g. “Case #”). Rows append below.
             </p>
