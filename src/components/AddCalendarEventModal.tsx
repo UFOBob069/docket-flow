@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { caseDisplayName } from "@/lib/case-display";
 import { googleCalendarDescription } from "@/lib/calendar-payload";
 import { postCalendarSync } from "@/lib/calendar-client";
@@ -72,6 +73,7 @@ export function AddCalendarEventModal({
   casePickerOptions,
   onSaved,
 }: AddCalendarEventModalProps) {
+  const router = useRouter();
   const [wizardStep, setWizardStep] = useState(0);
   const [selectedCaseId, setSelectedCaseId] = useState("");
   const [selectedSectionId, setSelectedSectionId] = useState(CASE_EVENT_KIND_SECTIONS[0]!.id);
@@ -324,6 +326,31 @@ export function AddCalendarEventModal({
                     {sec.title}
                   </button>
                 ))}
+              </div>
+              <div className="mt-4 border-t border-border pt-4">
+                <p className="text-xs text-text-muted">
+                  Prefer to extract deadlines from a scheduling order or similar file?
+                </p>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="mt-2"
+                  disabled={!effectiveCase || effectiveCase.status === "archived"}
+                  title={
+                    effectiveCase?.status === "archived"
+                      ? "Activate the case to import dates from a document"
+                      : !effectiveCase
+                        ? "Select a case first"
+                        : undefined
+                  }
+                  onClick={() => {
+                    if (!effectiveCase || effectiveCase.status === "archived") return;
+                    onClose();
+                    router.push(`/cases/${effectiveCase.id}/import-aso`);
+                  }}
+                >
+                  Import document with dates
+                </Button>
               </div>
             </>
           )}
