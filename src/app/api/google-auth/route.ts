@@ -5,25 +5,23 @@ export const runtime = "nodejs";
 
 const SCOPES = ["https://www.googleapis.com/auth/calendar"];
 
-function getOAuth2() {
+function getOAuth2(redirectUri: string) {
   const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
   if (!clientId || !clientSecret) {
     throw new Error("Set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET first");
   }
-  return new google.auth.OAuth2(
-    clientId,
-    clientSecret,
-    "http://localhost:3000/api/google-auth"
-  );
+  return new google.auth.OAuth2(clientId, clientSecret, redirectUri);
 }
 
 export async function GET(req: Request): Promise<Response> {
   const url = new URL(req.url);
+  /** Must match an “Authorized redirect URI” in Google Cloud Console for each deployed host (and localhost for dev). */
+  const redirectUri = `${url.origin}/api/google-auth`;
   const code = url.searchParams.get("code");
 
   if (!code) {
-    const oauth2 = getOAuth2();
+    const oauth2 = getOAuth2(redirectUri);
     const authUrl = oauth2.generateAuthUrl({
       access_type: "offline",
       prompt: "consent",
@@ -33,7 +31,7 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   try {
-    const oauth2 = getOAuth2();
+    const oauth2 = getOAuth2(redirectUri);
     const { tokens } = await oauth2.getToken(code);
 
     if (!tokens.refresh_token) {
