@@ -11,6 +11,7 @@ import { getRemindersForEventKind } from "@/lib/case-event-kinds";
 import { baseEvent } from "@/lib/event-factory";
 import { CASE_IMPORT_CSV_TEMPLATE, parseCasesImportCsv } from "@/lib/import-cases-csv";
 import type { ParsedIcsEvent } from "@/lib/ics-parse";
+import { matchCaseForSolIcsTitle, parseSolGroupCalendarTitle } from "@/lib/sol-ics-title-match";
 import {
   ALL_EVENT_KIND_SELECT_GROUPS,
   categoryForManualEventKind,
@@ -106,6 +107,22 @@ export default function ImportCalendarPage() {
     };
   }, [user, loading, supabaseReady]);
 
+  /** Pre-fill case assignment when SOL group titles include client name (and optional DOL). */
+  useEffect(() => {
+    if (!existingCases.length) return;
+    setRows((prev) => {
+      let changed = false;
+      const next = prev.map((r) => {
+        if (r.assignTo) return r;
+        const id = matchCaseForSolIcsTitle(r.title, existingCases);
+        if (!id) return r;
+        changed = true;
+        return { ...r, assignTo: `existing:${id}` };
+      });
+      return changed ? next : prev;
+    });
+  }, [existingCases]);
+
   const attorneys = useMemo(() => contacts.filter((c) => c.role === "attorney"), [contacts]);
   const paralegals = useMemo(() => contacts.filter((c) => c.role === "paralegal"), [contacts]);
 
@@ -182,17 +199,26 @@ export default function ImportCalendarPage() {
         setRows([]);
         return;
       }
+      let autoAssigned = 0;
       setRows(
-        list.map((e) => ({
-          ...e,
-          rowId: uuidv4(),
-          included: true,
-          eventKind: "other_event",
-          assignTo: "",
-        }))
+        list.map((e) => {
+          const caseId = matchCaseForSolIcsTitle(e.title, existingCases);
+          if (caseId) autoAssigned += 1;
+          const solTitle = parseSolGroupCalendarTitle(e.title) !== null || /\bSOL\b/i.test(e.title);
+          return {
+            ...e,
+            rowId: uuidv4(),
+            included: true,
+            eventKind: solTitle ? "sol_milestone" : "other_event",
+            assignTo: caseId ? `existing:${caseId}` : "",
+          };
+        })
       );
       setMsg(
-        `Loaded ${list.length} event(s) from today forward (cutoff uses America/Chicago, same as the rest of DocketFlow).`
+        `Loaded ${list.length} event(s) from today forward (cutoff uses America/Chicago, same as the rest of DocketFlow).` +
+          (autoAssigned > 0
+            ? ` ${autoAssigned} matched an existing case from the client name in the title (e.g. SOL milestones with “… CLIENT … DOL …”).`
+            : "")
       );
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Parse failed");
@@ -356,7 +382,10 @@ export default function ImportCalendarPage() {
           <span className="font-medium text-text-secondary">today through the next few years</span> are loaded.
           Events are stored in DocketFlow only (labeled “Originally from Google”) — they are{" "}
           <span className="font-medium text-text-secondary">not</span> created or linked in Google Calendar from this
-          app. Assign each row to an existing case or to a new case you define below.
+          app.           Assign each row to an existing case or to a new case you define below. Titles like{" "}
+          <span className="font-mono text-text-secondary">1 WEEK TO SOL - CLIENT NAME - DOL 05-01-24</span> are matched
+          to the case’s <span className="font-medium text-text-secondary">client name</span> (and date of incident if
+          DOL is present) when it is unambiguous.
         </p>
       </div>
 

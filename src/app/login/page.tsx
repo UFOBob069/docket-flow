@@ -68,7 +68,7 @@ function LoginForm() {
           aria-hidden
         />
         <div className="relative z-10 max-w-md text-center">
-          <h1 className="font-serif text-2xl font-semibold tracking-tight text-white">Sign in</h1>
+          <h1 className="font-serif text-2xl font-semibold tracking-tight !text-white">Sign in</h1>
           <p className="mt-3 text-sm text-white/65">
             Configure Supabase in{" "}
             <code className="rounded-md bg-white/10 px-2 py-0.5 font-mono text-xs text-pink-light">
@@ -130,8 +130,9 @@ function LoginForm() {
               <span className="font-serif text-3xl font-semibold text-white">D</span>
             )}
           </div>
-          <h1 className="font-serif text-3xl font-semibold tracking-tight text-white sm:text-4xl">
-            Docket<span className="text-pink">Flow</span>
+          <h1 className="font-serif text-3xl font-semibold tracking-tight sm:text-4xl">
+            <span className="!text-white">Docket</span>
+            <span className="text-pink">Flow</span>
           </h1>
           <p className="mt-3 max-w-sm text-sm leading-relaxed text-white/70">
             Case deadlines, synced to your calendar. Sign in with your firm Google account.
