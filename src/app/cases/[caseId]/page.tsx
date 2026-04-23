@@ -11,6 +11,7 @@ import { caseDisplayName } from "@/lib/case-display";
 import { googleCalendarDescription } from "@/lib/calendar-payload";
 import { postCalendarSync } from "@/lib/calendar-client";
 import { defaultEndIso } from "@/lib/event-factory";
+import { isGoogleIcsMirrorEvent } from "@/lib/calendar-event-origin";
 import { getFixedRemindersForKind, isTaxonomyEventKind } from "@/lib/case-event-kinds";
 import {
   ALL_EVENT_KIND_SELECT_GROUPS,
@@ -176,9 +177,10 @@ export default function CaseDetailPage() {
     if (!idToken) return;
     const toVerify = events.filter(
       (e) =>
-        e.googleEventId ||
-        (e.googleCalendarEventIdsByEmail &&
-          Object.keys(e.googleCalendarEventIdsByEmail).length > 0)
+        !isGoogleIcsMirrorEvent(e) &&
+        (e.googleEventId ||
+          (e.googleCalendarEventIdsByEmail &&
+            Object.keys(e.googleCalendarEventIdsByEmail).length > 0))
     );
     if (toVerify.length === 0) {
       setMsg("No synced deadlines to verify.");
@@ -285,7 +287,7 @@ export default function CaseDetailPage() {
       try {
         let removed = 0;
         for (const ev of events) {
-          if (ev.googleEventId) {
+          if (!isGoogleIcsMirrorEvent(ev) && ev.googleEventId) {
             const res = await postCalendarSync(calendarDeletePayload(ev), idToken);
             if (!res.ok) {
               const j = (await res.json()) as { error?: string };
@@ -294,10 +296,11 @@ export default function CaseDetailPage() {
             removed++;
           }
           if (
-            ev.googleEventId ||
-            ev.googleHostCalendarId ||
-            (ev.googleCalendarEventIdsByEmail &&
-              Object.keys(ev.googleCalendarEventIdsByEmail).length > 0)
+            !isGoogleIcsMirrorEvent(ev) &&
+            (ev.googleEventId ||
+              ev.googleHostCalendarId ||
+              (ev.googleCalendarEventIdsByEmail &&
+                Object.keys(ev.googleCalendarEventIdsByEmail).length > 0))
           ) {
             await clearEventGoogleCalendarFields(supabase, caseId, ev.id);
           }
@@ -354,7 +357,7 @@ export default function CaseDetailPage() {
     if (!caseId || !c || !user) return;
     setBusy(true); setMsg(null);
     try {
-      if (ev.googleEventId) {
+      if (!isGoogleIcsMirrorEvent(ev) && ev.googleEventId) {
         const res = await postCalendarSync(calendarDeletePayload(ev), idToken);
         if (!res.ok) { const j = (await res.json()) as { error?: string }; throw new Error(j.error ?? "Calendar delete failed"); }
       }
@@ -366,7 +369,11 @@ export default function CaseDetailPage() {
         description: `Deleted "${ev.title}" (${ev.date})`,
         userEmail: user.email ?? "",
       });
-      flash(`Deleted "${ev.title}"`);
+      flash(
+        isGoogleIcsMirrorEvent(ev)
+          ? `Removed "${ev.title}" from DocketFlow (Google Calendar unchanged)`
+          : `Deleted "${ev.title}"`
+      );
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "Delete failed");
     } finally { setBusy(false); }
@@ -388,7 +395,7 @@ export default function CaseDetailPage() {
       const display = caseDisplayName(c);
       let removed = 0;
       for (const ev of events) {
-        if (ev.googleEventId) {
+        if (!isGoogleIcsMirrorEvent(ev) && ev.googleEventId) {
           const res = await postCalendarSync(calendarDeletePayload(ev), idToken);
           if (!res.ok) {
             const j = (await res.json()) as { error?: string };
@@ -397,10 +404,11 @@ export default function CaseDetailPage() {
           removed++;
         }
         if (
-          ev.googleEventId ||
-          ev.googleHostCalendarId ||
-          (ev.googleCalendarEventIdsByEmail &&
-            Object.keys(ev.googleCalendarEventIdsByEmail).length > 0)
+          !isGoogleIcsMirrorEvent(ev) &&
+          (ev.googleEventId ||
+            ev.googleHostCalendarId ||
+            (ev.googleCalendarEventIdsByEmail &&
+              Object.keys(ev.googleCalendarEventIdsByEmail).length > 0))
         ) {
           await clearEventGoogleCalendarFields(supabase, caseId, ev.id);
         }
@@ -456,7 +464,7 @@ export default function CaseDetailPage() {
         updated = { ...updated, remindersMinutes: [...getFixedRemindersForKind(ek)] };
       }
       await saveEvent(supabase, caseId, updated);
-      if (updated.googleEventId) {
+      if (!isGoogleIcsMirrorEvent(updated) && updated.googleEventId) {
         const res = await postCalendarSync({
           action: "update",
           googleEventId: updated.googleEventId,
@@ -497,7 +505,7 @@ export default function CaseDetailPage() {
     try {
       const selectedEvents = events.filter((e) => selected.has(e.id));
       for (const ev of selectedEvents) {
-        if (ev.googleEventId) {
+        if (!isGoogleIcsMirrorEvent(ev) && ev.googleEventId) {
           await postCalendarSync(calendarDeletePayload(ev), idToken);
         }
       }
@@ -526,7 +534,7 @@ export default function CaseDetailPage() {
       const selectedEvents = events.filter((e) => selected.has(e.id));
       await bulkRescheduleEvents(supabase, caseId, [...selected], days);
       for (const ev of selectedEvents) {
-        if (!ev.googleEventId) continue;
+        if (isGoogleIcsMirrorEvent(ev) || !ev.googleEventId) continue;
         const d = new Date(`${ev.date}T12:00:00`);
         d.setDate(d.getDate() + days);
         const newDate = d.toISOString().slice(0, 10);
@@ -584,6 +592,7 @@ export default function CaseDetailPage() {
       );
       const withGoogle = events.filter(
         (ev) =>
+          !isGoogleIcsMirrorEvent(ev) &&
           !ev.googleHostCalendarId &&
           (ev.googleEventId ||
             (ev.googleCalendarEventIdsByEmail &&
@@ -987,7 +996,11 @@ export default function CaseDetailPage() {
                         </Badge>
                       )}
                       <Badge variant={catBadge[ev.category]}>{ev.category}</Badge>
-                      {ev.googleEventId && <Badge variant="success">Synced</Badge>}
+                      {isGoogleIcsMirrorEvent(ev) ? (
+                        <Badge variant="default">Originally from Google</Badge>
+                      ) : (
+                        ev.googleEventId && <Badge variant="success">Synced</Badge>
+                      )}
                       {ev.noiseFlag && <Badge variant="warning">{ev.noiseReason ?? "Noise"}</Badge>}
                       {ev.completed && <Badge variant="success">Complete</Badge>}
                     </div>
@@ -1063,6 +1076,16 @@ export default function CaseDetailPage() {
           <Card className="max-h-[min(90vh,880px)] w-full max-w-lg overflow-y-auto shadow-2xl">
             <CardHeader><h3 className="text-base font-semibold text-text">Edit Event</h3></CardHeader>
             <CardBody className="space-y-4">
+              {isGoogleIcsMirrorEvent(editing) && (
+                <div className="rounded-lg border border-border bg-surface-alt/80 px-4 py-3 text-sm text-text-secondary">
+                  <p className="font-medium text-text">Originally from Google Calendar</p>
+                  <p className="mt-1 text-xs text-text-muted">
+                    This entry is only in DocketFlow for your workflow. To change the real calendar event, edit it in{" "}
+                    <span className="font-medium text-text-secondary">Google Calendar</span>. You can still update fields
+                    here for notes and DocketFlow lists, or remove the entry from this case (Google is not changed).
+                  </p>
+                </div>
+              )}
               <div>
                 <Label>Event type</Label>
                 <Select

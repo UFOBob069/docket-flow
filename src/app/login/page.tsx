@@ -15,6 +15,7 @@ function LoginForm() {
   const searchParams = useSearchParams();
   const hydrated = useHydrated();
   const {
+    signInWithGoogle,
     signInWithEmailPassword,
     signUpWithNameEmailPassword,
     sendPasswordResetEmail,
@@ -32,6 +33,7 @@ function LoginForm() {
   const [busy, setBusy] = useState(false);
   const [signupNotice, setSignupNotice] = useState<string | null>(null);
   const [forgotSent, setForgotSent] = useState(false);
+  const [googleBusy, setGoogleBusy] = useState(false);
 
   useEffect(() => {
     if (searchParams.get("error") === "auth") {
@@ -64,6 +66,17 @@ function LoginForm() {
         </Link>
       </div>
     );
+  }
+
+  async function handleGoogleSignIn() {
+    setError(null);
+    setGoogleBusy(true);
+    try {
+      await signInWithGoogle();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Google sign-in failed");
+      setGoogleBusy(false);
+    }
   }
 
   async function handleSignIn(e: React.FormEvent) {
@@ -138,12 +151,32 @@ function LoginForm() {
             Sign in to DocketFlow
           </h1>
           <p className="mt-2 text-sm text-text-muted">
-            @ramosjames.com accounts only
+            Sign in with your firm Google account (@ramosjames.com)
           </p>
         </div>
 
         <Card>
           <CardBody className="space-y-5">
+            {(mode === "signin" || mode === "signup") && (
+              <div className="space-y-3">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="w-full border border-border bg-white py-2.5 text-sm font-semibold text-text shadow-sm hover:bg-surface-alt"
+                  disabled={busy || loading || googleBusy}
+                  onClick={() => void handleGoogleSignIn()}
+                >
+                  {googleBusy ? "Redirecting…" : "Continue with Google"}
+                </Button>
+                <div className="relative flex items-center justify-center py-1">
+                  <div className="absolute inset-x-0 top-1/2 h-px bg-border" />
+                  <span className="relative bg-white px-3 text-xs font-medium text-text-dim">
+                    {mode === "signup" ? "or create account with email" : "or use email"}
+                  </span>
+                </div>
+              </div>
+            )}
+
             {signupNotice && (
               <div className="rounded-lg border border-success/20 bg-success-light px-4 py-3 text-sm text-text">
                 {signupNotice}
@@ -329,9 +362,11 @@ function LoginForm() {
             </div>
 
             <p className="text-center text-xs text-text-dim">
-              Enable <strong className="font-semibold text-text-secondary">Email</strong> with{" "}
-              <strong className="font-semibold text-text-secondary">password</strong> in Supabase →
-              Authentication → Providers. Add <code className="rounded bg-surface-alt px-1 font-mono text-[10px]">/auth/update-password</code> to redirect URLs if you use reset password.
+              In Supabase → Authentication → Providers: enable <strong className="font-semibold text-text-secondary">Google</strong>{" "}
+              (Client ID & secret from Google Cloud Console → OAuth consent). Add redirect URL{" "}
+              <code className="rounded bg-surface-alt px-1 font-mono text-[10px]">/auth/callback</code> (site URL + production).{" "}
+              Email/password remains optional for legacy accounts; add{" "}
+              <code className="rounded bg-surface-alt px-1 font-mono text-[10px]">/auth/update-password</code> if you use password reset.
             </p>
           </CardBody>
         </Card>

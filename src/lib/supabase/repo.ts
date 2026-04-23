@@ -57,6 +57,7 @@ function eventFromRow(r: Record<string, unknown>): CalendarEvent {
     extraInternalContactIds: (r.extra_internal_contact_ids as string[]) ?? undefined,
     zoomLink: (r.zoom_link as string) ?? null,
     priority: (r.priority as CalendarEvent["priority"]) ?? undefined,
+    calendarOrigin: (r.calendar_origin as CalendarEvent["calendarOrigin"]) ?? "docketflow",
     googleEventId: (r.google_event_id as string) ?? undefined,
     googleCalendarEventIdsByEmail:
       (r.google_calendar_event_ids_by_email as Record<string, string>) ?? undefined,
@@ -117,6 +118,7 @@ function eventToRow(ev: CalendarEvent, ownerId: string): Record<string, unknown>
       ev.extraInternalContactIds?.length ? ev.extraInternalContactIds : null,
     zoom_link: ev.zoomLink ?? null,
     priority: ev.priority ?? null,
+    calendar_origin: ev.calendarOrigin ?? "docketflow",
     google_event_id: ev.googleEventId ?? null,
     google_calendar_event_ids_by_email: ev.googleCalendarEventIdsByEmail ?? null,
     google_host_calendar_id: ev.googleHostCalendarId ?? null,

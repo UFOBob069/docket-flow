@@ -104,6 +104,7 @@ export function extractedToCalendarEvents(
       id: uuidv4(),
       caseId,
       ownerId,
+      calendarOrigin: "docketflow" as const,
       title: row.title?.trim() || "Deadline",
       date: row.date,
       description: row.description?.trim() ?? "",

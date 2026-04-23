@@ -42,7 +42,11 @@ export async function GET(request: Request): Promise<Response> {
   );
 
   if (hasPkceCode) {
-    await supabase.auth.exchangeCodeForSession(code!);
+    const { error } = await supabase.auth.exchangeCodeForSession(code!);
+    if (error) {
+      console.error("[auth/callback] exchangeCodeForSession:", error.message);
+      return NextResponse.redirect(`${origin}/login?error=auth`);
+    }
   } else if (hasTokenHash && tokenHash && type) {
     const { error } = await supabase.auth.verifyOtp({
       type: type as

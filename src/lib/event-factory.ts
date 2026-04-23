@@ -17,6 +17,7 @@ export function baseEvent(
     id: uuidv4(),
     caseId,
     ownerId,
+    calendarOrigin: "docketflow",
     description: "",
     category: "other",
     eventKind: "other_event",

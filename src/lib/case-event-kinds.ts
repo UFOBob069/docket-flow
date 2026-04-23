@@ -32,6 +32,11 @@ export const CASE_EVENT_KIND_SECTIONS: CaseEventKindSection[] = [
         remindersMinutes: [20160, 10080],
       },
       { value: "milestone_scheduling_order", label: "Scheduling order", remindersMinutes: [20160, 10080] },
+      {
+        value: "milestone_statute_of_limitations",
+        label: "Statute of limitations",
+        remindersMinutes: [1440],
+      },
     ],
   },
   {
@@ -282,6 +287,7 @@ export function categoryForEventKind(kind: EventKind): EventCategory {
     case "milestone_plaintiff_initial_disclosures":
     case "milestone_defendant_initial_disclosures":
     case "milestone_scheduling_order":
+    case "milestone_statute_of_limitations":
     case "medical_affidavit_18_001":
     case "medical_counter_affidavit":
     case "sol":

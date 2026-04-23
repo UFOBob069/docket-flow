@@ -22,6 +22,7 @@ export type EventKind =
   | "milestone_plaintiff_initial_disclosures"
   | "milestone_defendant_initial_disclosures"
   | "milestone_scheduling_order"
+  | "milestone_statute_of_limitations"
   /* Pleadings */
   | "pleadings_amended_deadline"
   /* Medical / Ch. 18 */
@@ -84,6 +85,9 @@ export type EventKind =
 
 export type ContactRole = "attorney" | "paralegal" | "legal_assistant" | "other";
 
+/** Where the event row came from; mirrors are not created/updated/deleted via Google Calendar API. */
+export type CalendarEventOrigin = "docketflow" | "google_ics_mirror";
+
 export interface Contact {
   id: string;
   ownerId: string;
@@ -138,6 +142,11 @@ export interface CalendarEvent {
   extraInternalContactIds?: string[];
   zoomLink?: string | null;
   priority?: "high" | "medium" | "low";
+  /**
+   * `google_ics_mirror`: copied from Google (e.g. ICS) for DocketFlow UI only.
+   * Edits here do not change Google; remove only deletes this row.
+   */
+  calendarOrigin?: CalendarEventOrigin;
   googleEventId?: string;
   /** Lowercased email → Google event id on that user's primary calendar */
   googleCalendarEventIdsByEmail?: Record<string, string>;

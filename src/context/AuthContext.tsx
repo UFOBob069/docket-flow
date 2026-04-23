@@ -19,6 +19,8 @@ type AuthState = {
   idToken: string | null;
   loading: boolean;
   supabaseReady: boolean;
+  /** Opens Google OAuth; session returns via /auth/callback (PKCE). */
+  signInWithGoogle: () => Promise<void>;
   signInWithEmailPassword: (email: string, password: string) => Promise<void>;
   signUpWithNameEmailPassword: (
     fullName: string,
@@ -94,6 +96,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       idToken,
       loading,
       supabaseReady,
+      signInWithGoogle: async () => {
+        if (!isSupabaseConfigured()) {
+          throw new Error("Supabase is not configured");
+        }
+        const supabase = createSupabaseBrowserClient();
+        const redirectTo = `${window.location.origin}/auth/callback`;
+        const { data, error } = await supabase.auth.signInWithOAuth({
+          provider: "google",
+          options: {
+            redirectTo,
+            queryParams: {
+              hd: ALLOWED_DOMAIN,
+              prompt: "select_account",
+            },
+          },
+        });
+        if (error) {
+          const raw = `${error.message ?? ""} ${(error as { code?: string }).code ?? ""}`.toLowerCase();
+          if (
+            raw.includes("not enabled") ||
+            raw.includes("unsupported provider") ||
+            raw.includes("validation_failed")
+          ) {
+            throw new Error(
+              "Google sign-in is not turned on for this Supabase project. Open Supabase Dashboard → Authentication → Providers → enable Google, then paste your Google Cloud OAuth client ID and client secret. Save, wait a few seconds, and try again."
+            );
+          }
+          throw error;
+        }
+        if (data.url) {
+          window.location.assign(data.url);
+          return;
+        }
+        throw new Error(
+          "Google sign-in did not return a redirect URL. Enable the Google provider in Supabase and confirm redirect URLs include /auth/callback for this app."
+        );
+      },
       signInWithEmailPassword: async (rawEmail: string, password: string) => {
         if (!isSupabaseConfigured()) {
           throw new Error("Supabase is not configured");

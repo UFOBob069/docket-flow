@@ -13,6 +13,7 @@ import {
   subscribeContacts,
   type EventWithCaseRow,
 } from "@/lib/supabase/repo";
+import { isGoogleIcsMirrorEvent } from "@/lib/calendar-event-origin";
 import { compareEventsBySchedule } from "@/lib/event-schedule";
 import { CALENDAR_TIMEZONE } from "@/lib/event-factory";
 import { EVENT_KIND_FILTER_OPTIONS, eventKindDisplayLabel } from "@/lib/one-off-events";
@@ -384,6 +385,11 @@ export default function CalendarPage() {
                         <div className="flex flex-wrap items-center gap-2">
                           <h2 className="text-base font-semibold text-text">{e.title}</h2>
                           <Badge variant={categoryBadgeVariant(e.category)}>{e.category}</Badge>
+                          {isGoogleIcsMirrorEvent(e) && (
+                            <span className="rounded-md bg-surface-alt px-2 py-0.5 text-xs font-medium text-text-secondary">
+                              Originally from Google
+                            </span>
+                          )}
                           {kind && (
                             <span className="rounded-md bg-surface-alt px-2 py-0.5 text-xs font-medium text-text-secondary">
                               {kind}
