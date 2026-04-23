@@ -7,13 +7,10 @@ import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
 import { buildCalendarBatches } from "@/lib/calendar-payload";
+import { getRemindersForEventKind } from "@/lib/case-event-kinds";
 import { extractedToCalendarEvents } from "@/lib/deadline-processing";
-import {
-  DEFAULT_REMINDERS,
-  REMINDER_OPTIONS,
-  labelForMinutes,
-} from "@/lib/reminder-presets";
 import { caseDisplayName } from "@/lib/case-display";
+import { ALL_EVENT_KIND_SELECT_GROUPS, categoryForManualEventKind } from "@/lib/one-off-events";
 import {
   logActivity,
   saveEvent,
@@ -27,8 +24,10 @@ import type {
   Case,
   Contact,
   EventCategory,
+  EventKind,
   ExtractedDeadline,
 } from "@/lib/types";
+import { FixedRemindersReadout } from "@/components/FixedRemindersReadout";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { useHydrated } from "@/hooks/useHydrated";
 import {
@@ -44,10 +43,6 @@ import {
   Spinner,
   Textarea,
 } from "@/components/ui";
-
-const categories: EventCategory[] = [
-  "trial", "mediation", "experts", "motions", "discovery", "pretrial", "other",
-];
 
 const catBadge: Record<EventCategory, "trial" | "discovery" | "motions" | "pretrial" | "mediation" | "experts" | "other"> = {
   trial: "trial", discovery: "discovery", motions: "motions", pretrial: "pretrial",
@@ -86,6 +81,11 @@ export default function ImportAsoPage() {
   const [progressMsg, setProgressMsg] = useState<string | null>(null);
   const [progressPct, setProgressPct] = useState(0);
   const [err, setErr] = useState<string | null>(null);
+  const [datesValidatedConfirmed, setDatesValidatedConfirmed] = useState(false);
+
+  useEffect(() => {
+    if (step !== 3) setDatesValidatedConfirmed(false);
+  }, [step]);
 
   useEffect(() => {
     if (!supabaseReady || loading || !user) return;
@@ -163,7 +163,7 @@ export default function ImportAsoPage() {
       }
       const list = data.deadlines ?? [];
       if (!list.length) {
-        setErr("The AI did not find any deadlines in this document. Try a different ASO/DCO file.");
+        setErr("The AI did not find any deadlines in this document. Try a different file or clearer scheduling language.");
         return;
       }
       if (!user) return;
@@ -190,6 +190,10 @@ export default function ImportAsoPage() {
 
   async function finalize() {
     if (!user?.id || !idToken || !caseId || !caseRecord) return;
+    if (!datesValidatedConfirmed) {
+      setErr("Confirm that the dates and details have been validated before importing.");
+      return;
+    }
     if (!events.some((e) => e.included)) {
       setErr("Include at least one deadline before saving.");
       return;
@@ -245,7 +249,7 @@ export default function ImportAsoPage() {
         body: JSON.stringify({
           action: "create",
           caseName: displayName,
-          sourceLabel: file?.name ?? "ASO/DCO",
+          sourceLabel: file?.name ?? "Document with dates",
           events: batches.map((b) => ({
             title: b.title,
             date: b.date,
@@ -293,7 +297,7 @@ export default function ImportAsoPage() {
         caseId,
         caseName: displayName,
         action: "event_created",
-        description: `Imported ${included} ASO/DCO deadline(s) from ${file?.name ?? "document"}`,
+        description: `Imported ${included} deadline(s) from ${file?.name ?? "document"} (validated import)`,
         userEmail: user.email ?? "",
       });
       setProgressPct(100);
@@ -348,7 +352,7 @@ export default function ImportAsoPage() {
   if (caseRecord.status === "archived") {
     return (
       <PageWrapper className="max-w-[960px]">
-        <p className="text-sm font-medium text-danger">This case is archived. Activate it before importing ASO/DCO deadlines.</p>
+        <p className="text-sm font-medium text-danger">This case is archived. Activate it before importing dates from a document.</p>
         <Link href={`/cases/${caseId}`} className="mt-3 inline-block text-sm font-medium text-primary hover:underline">
           Back to case
         </Link>
@@ -368,7 +372,7 @@ export default function ImportAsoPage() {
       {/* Page header */}
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-text lg:text-3xl">Import ASO / DCO</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-text lg:text-3xl">Import Document with Dates</h1>
           <p className="mt-1 text-sm text-text-muted">
             {caseDisplayName(caseRecord)}
           </p>
@@ -431,11 +435,13 @@ export default function ImportAsoPage() {
         <Card className="mt-8">
           <CardHeader>
             <h2 className="text-base font-semibold text-text">Upload Document</h2>
-            <p className="mt-1 text-sm text-text-muted">Upload your ASO/DCO scheduling order (PDF or DOCX).</p>
+            <p className="mt-1 text-sm text-text-muted">
+              Upload a scheduling order or other dated legal document (PDF or DOCX).
+            </p>
           </CardHeader>
           <CardBody className="max-w-lg space-y-4">
             <div>
-              <Label>ASO / DCO File</Label>
+              <Label>Document file</Label>
               <input
                 type="file"
                 accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -490,7 +496,7 @@ export default function ImportAsoPage() {
           <div>
             <h2 className="text-lg font-semibold text-text">Review Extracted Deadlines</h2>
             <p className="mt-1 text-sm text-text-muted">
-              Edit, include/exclude, and set reminders for each deadline.
+              Edit, include/exclude, and set the event type for each deadline. Reminders follow the type (same as Add calendar event).
             </p>
           </div>
 
@@ -513,18 +519,25 @@ export default function ImportAsoPage() {
                       onChange={(e) => updateEvent(ev.id, { date: e.target.value })}
                     />
                     <Select
-                      className="w-auto text-sm"
-                      value={ev.category}
+                      className="min-w-[12rem] max-w-[20rem] flex-1 text-sm"
+                      value={ev.eventKind ?? "other_event"}
                       onChange={(e) => {
-                        const cat = e.target.value as EventCategory;
+                        const k = e.target.value as EventKind;
                         updateEvent(ev.id, {
-                          category: cat,
-                          remindersMinutes: [...DEFAULT_REMINDERS[cat]],
+                          eventKind: k,
+                          category: categoryForManualEventKind(k),
+                          remindersMinutes: [...getRemindersForEventKind(k)],
                         });
                       }}
                     >
-                      {categories.map((c) => (
-                        <option key={c} value={c}>{c}</option>
+                      {ALL_EVENT_KIND_SELECT_GROUPS.map((g) => (
+                        <optgroup key={g.topic} label={g.topic}>
+                          {g.options.map((o) => (
+                            <option key={o.value} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </optgroup>
                       ))}
                     </Select>
                     <Badge variant={catBadge[ev.category]}>{ev.category}</Badge>
@@ -575,58 +588,7 @@ export default function ImportAsoPage() {
                     </div>
 
                     <div className="space-y-4">
-                      <div>
-                        <Label>Reminders</Label>
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          {ev.remindersMinutes.map((m, i) => (
-                            <div
-                              key={i}
-                              className="flex items-center gap-1 rounded-full border border-border bg-surface-alt px-2.5 py-1"
-                            >
-                              <select
-                                className="bg-transparent text-xs text-text outline-none"
-                                value={m}
-                                onChange={(e) => {
-                                  const updated = [...ev.remindersMinutes];
-                                  updated[i] = Number(e.target.value);
-                                  updateEvent(ev.id, { remindersMinutes: updated });
-                                }}
-                              >
-                                {REMINDER_OPTIONS.map((opt) => (
-                                  <option key={opt.minutes} value={opt.minutes}>{opt.label}</option>
-                                ))}
-                                {!REMINDER_OPTIONS.some((o) => o.minutes === m) && (
-                                  <option value={m}>{labelForMinutes(m)}</option>
-                                )}
-                              </select>
-                              <button
-                                type="button"
-                                className="text-[10px] text-text-dim hover:text-danger"
-                                onClick={() => {
-                                  const updated = ev.remindersMinutes.filter((_, j) => j !== i);
-                                  updateEvent(ev.id, { remindersMinutes: updated });
-                                }}
-                              >
-                                ✕
-                              </button>
-                            </div>
-                          ))}
-                          {ev.remindersMinutes.length < 5 && (
-                            <button
-                              type="button"
-                              className="rounded-full border border-dashed border-primary/40 px-2.5 py-1 text-xs font-medium text-primary transition hover:bg-primary-light"
-                              onClick={() => {
-                                const used = new Set(ev.remindersMinutes);
-                                const next = REMINDER_OPTIONS.find((o) => !used.has(o.minutes))?.minutes ?? 1440;
-                                updateEvent(ev.id, { remindersMinutes: [...ev.remindersMinutes, next] });
-                              }}
-                            >
-                              + Add
-                            </button>
-                          )}
-                        </div>
-                      </div>
-
+                      <FixedRemindersReadout minutes={getRemindersForEventKind(ev.eventKind ?? "other_event")} />
                     </div>
                   </div>
                 </CardBody>
@@ -796,12 +758,32 @@ export default function ImportAsoPage() {
             )}
 
             {!busy && (
-              <div className="mt-8 flex gap-3">
-                <Button variant="secondary" onClick={() => setStep(2)}>Back</Button>
-                <Button onClick={() => void finalize()}>
-                  Import &amp; Sync to Calendar
-                </Button>
-              </div>
+              <>
+                <div className="mt-8 rounded-lg border border-border bg-surface-alt/60 px-4 py-3">
+                  <label className="flex cursor-pointer items-start gap-3 text-sm text-text">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 h-4 w-4 shrink-0 rounded border-border text-primary focus:ring-primary/30"
+                      checked={datesValidatedConfirmed}
+                      onChange={(e) => {
+                        setDatesValidatedConfirmed(e.target.checked);
+                        if (e.target.checked) setErr(null);
+                      }}
+                    />
+                    <span>
+                      <span className="font-semibold text-text">Validation required.</span>{" "}
+                      Someone with authority over this case has reviewed the extracted dates, titles, and details and
+                      confirms they match the source document before calendar import.
+                    </span>
+                  </label>
+                </div>
+                <div className="mt-6 flex gap-3">
+                  <Button variant="secondary" onClick={() => setStep(2)}>Back</Button>
+                  <Button disabled={!datesValidatedConfirmed} onClick={() => void finalize()}>
+                    Import &amp; Sync to Calendar
+                  </Button>
+                </div>
+              </>
             )}
           </CardBody>
         </Card>

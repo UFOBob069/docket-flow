@@ -21,6 +21,7 @@ export function baseEvent(
     category: "other",
     eventKind: "other_event",
     included: true,
+    completed: false,
     groupSuggested: false,
     mergeWithSameGroup: false,
     noiseFlag: false,

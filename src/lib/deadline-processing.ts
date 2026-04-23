@@ -1,5 +1,6 @@
-import type { CalendarEvent, ExtractedDeadline } from "./types";
-import { DEFAULT_REMINDERS } from "./reminder-presets";
+import { getRemindersForEventKind } from "./case-event-kinds";
+import type { CalendarEvent, EventKind, ExtractedDeadline } from "./types";
+import { EVENT_KIND_LABELS, categoryForManualEventKind } from "./one-off-events";
 import { v4 as uuidv4 } from "uuid";
 
 const NOISE_PATTERNS =
@@ -23,18 +24,9 @@ function similar(a: string, b: string): boolean {
   return longer.includes(shorter) && shorter.length / longer.length > 0.72;
 }
 
-function parseCategory(raw: string): CalendarEvent["category"] {
-  const c = raw.toLowerCase();
-  const allowed: CalendarEvent["category"][] = [
-    "trial",
-    "mediation",
-    "experts",
-    "motions",
-    "discovery",
-    "pretrial",
-    "other",
-  ];
-  return (allowed.find((x) => x === c) ?? "other") as CalendarEvent["category"];
+function parseExtractedEventKind(raw: string | undefined): EventKind {
+  if (raw && raw in EVENT_KIND_LABELS) return raw as EventKind;
+  return "other_event";
 }
 
 function parsePriority(raw?: string): CalendarEvent["priority"] | undefined {
@@ -106,7 +98,8 @@ export function extractedToCalendarEvents(
   const now = Date.now();
   return withGroups.map(({ row, groupId }) => {
     const { noise, reason } = isNoise(row.description, row.title);
-    const category = parseCategory(row.category);
+    const eventKind = parseExtractedEventKind(row.eventKind);
+    const category = categoryForManualEventKind(eventKind);
     return {
       id: uuidv4(),
       caseId,
@@ -114,16 +107,17 @@ export function extractedToCalendarEvents(
       title: row.title?.trim() || "Deadline",
       date: row.date,
       description: row.description?.trim() ?? "",
-      eventKind: "aso_dco" as const,
+      eventKind,
       category,
       priority: parsePriority(row.priority),
       included: !noise,
+      completed: false,
       groupSuggested: Boolean(groupId),
       groupId,
       mergeWithSameGroup: false,
       noiseFlag: noise,
       noiseReason: reason,
-      remindersMinutes: [...DEFAULT_REMINDERS[category]],
+      remindersMinutes: [...getRemindersForEventKind(eventKind)],
       createdAt: now,
       updatedAt: now,
     };

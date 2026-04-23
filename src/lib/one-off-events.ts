@@ -1,102 +1,93 @@
 import type { EventCategory, EventKind } from "./types";
+import {
+  CASE_EVENT_KIND_SECTIONS,
+  categoryForEventKind,
+} from "./case-event-kinds";
 
 export type ManualEventKindGroup = {
   topic: string;
   options: { value: EventKind; label: string }[];
 };
 
-/** Add-event picker: topics and subtopics (no SOL / ASO / system-only kinds). */
-export const MANUAL_EVENT_KIND_GROUPS: ManualEventKindGroup[] = [
-  {
-    topic: "Court / Legal Events",
-    options: [
-      { value: "hearing", label: "Hearing" },
-      { value: "trial", label: "Trial" },
-      { value: "mediation", label: "Mediation" },
-      { value: "deposition", label: "Deposition" },
-      { value: "court_appearance", label: "Court Appearance" },
-    ],
-  },
-  {
-    topic: "Deadlines",
-    options: [
-      { value: "filing_deadline", label: "Filing Deadline" },
-      { value: "discovery_deadline", label: "Discovery Deadline" },
-      { value: "demand_response", label: "Demand Response" },
-    ],
-  },
-  {
-    topic: "Client / Communication",
-    options: [{ value: "client_meeting", label: "Client Meeting" }],
-  },
-  {
-    topic: "Internal Work",
-    options: [
-      { value: "attorney_review", label: "Attorney Review" },
-      { value: "case_strategy", label: "Case Strategy" },
-      { value: "internal_meeting", label: "Internal Meeting" },
-      { value: "document_review", label: "Document Review" },
-    ],
-  },
-  {
-    topic: "Prep",
-    options: [
-      { value: "depo_prep", label: "Depo Prep" },
-      { value: "mediation_prep", label: "Mediation Prep" },
-      { value: "trial_prep", label: "Trial Prep" },
-    ],
-  },
-  {
-    topic: "Other",
-    options: [{ value: "other_event", label: "Other" }],
-  },
-];
+function sectionToGroup(sec: (typeof CASE_EVENT_KIND_SECTIONS)[number]): ManualEventKindGroup {
+  return {
+    topic: sec.title,
+    options: sec.kinds.map((k) => ({ value: k.value, label: k.label })),
+  };
+}
 
-export const DEFAULT_MANUAL_EVENT_KIND: EventKind =
-  MANUAL_EVENT_KIND_GROUPS[0]!.options[0]!.value;
+/** Full taxonomy for dropdowns (same order as progressive picker). */
+export const MANUAL_EVENT_KIND_GROUPS: ManualEventKindGroup[] =
+  CASE_EVENT_KIND_SECTIONS.map(sectionToGroup);
+
+export const DEFAULT_MANUAL_EVENT_KIND: EventKind = CASE_EVENT_KIND_SECTIONS[0]!.kinds[0]!.value;
 
 const SYSTEM_EVENT_KIND_OPTIONS: { value: EventKind; label: string }[] = [
   { value: "sol", label: "SOL" },
   { value: "sol_milestone", label: "SOL lead-up" },
-  { value: "aso_dco", label: "ASO / DCO" },
+  { value: "aso_dco", label: "Imported scheduling order" },
 ];
 
 const LEGACY_EVENT_KIND_OPTIONS: { value: EventKind; label: string }[] = [
+  { value: "hearing", label: "Hearing (legacy)" },
+  { value: "trial", label: "Trial (legacy)" },
+  { value: "mediation", label: "Mediation (legacy)" },
+  { value: "deposition", label: "Deposition (legacy)" },
+  { value: "court_appearance", label: "Court appearance (legacy)" },
+  { value: "filing_deadline", label: "Filing deadline (legacy)" },
+  { value: "discovery_deadline", label: "Discovery deadline (legacy)" },
+  { value: "demand_response", label: "Demand response (legacy)" },
+  { value: "document_review", label: "Document review (legacy)" },
+  { value: "depo_prep", label: "Depo prep (legacy)" },
+  { value: "mediation_prep", label: "Mediation prep (legacy)" },
+  { value: "trial_prep", label: "Trial prep (legacy)" },
   { value: "trial_deposition", label: "Trial deposition (legacy)" },
   { value: "client_call", label: "Client call (legacy)" },
 ];
 
-/** Edit-event dropdown: manual groups + system + legacy. */
+/** Edit-event dropdown: taxonomy + system + legacy. */
 export const ALL_EVENT_KIND_SELECT_GROUPS: ManualEventKindGroup[] = [
   ...MANUAL_EVENT_KIND_GROUPS,
   { topic: "Imported / system", options: SYSTEM_EVENT_KIND_OPTIONS },
   { topic: "Legacy", options: LEGACY_EVENT_KIND_OPTIONS },
 ];
 
-export const EVENT_KIND_LABELS: Record<EventKind, string> = {
-  sol: "SOL",
-  sol_milestone: "SOL lead-up",
-  aso_dco: "ASO / DCO",
-  hearing: "Hearing",
-  trial: "Trial",
-  mediation: "Mediation",
-  deposition: "Deposition",
-  court_appearance: "Court Appearance",
-  filing_deadline: "Filing Deadline",
-  discovery_deadline: "Discovery Deadline",
-  demand_response: "Demand Response",
-  client_meeting: "Client Meeting",
-  attorney_review: "Attorney Review",
-  case_strategy: "Case Strategy",
-  internal_meeting: "Internal Meeting",
-  document_review: "Document Review",
-  depo_prep: "Depo Prep",
-  mediation_prep: "Mediation Prep",
-  trial_prep: "Trial Prep",
-  other_event: "Other",
-  trial_deposition: "Trial deposition (legacy)",
-  client_call: "Client call (legacy)",
-};
+function buildEventKindLabels(): Record<EventKind, string> {
+  const labels = {} as Record<string, string>;
+  for (const s of CASE_EVENT_KIND_SECTIONS) {
+    for (const k of s.kinds) labels[k.value] = k.label;
+  }
+  const extra: Partial<Record<EventKind, string>> = {
+    sol: "SOL",
+    sol_milestone: "SOL lead-up",
+    aso_dco: "Imported scheduling order",
+    hearing: "Hearing (legacy)",
+    trial: "Trial (legacy)",
+    mediation: "Mediation (legacy)",
+    deposition: "Deposition (legacy)",
+    court_appearance: "Court appearance (legacy)",
+    filing_deadline: "Filing deadline (legacy)",
+    discovery_deadline: "Discovery deadline (legacy)",
+    demand_response: "Demand response (legacy)",
+    document_review: "Document review (legacy)",
+    depo_prep: "Depo prep (legacy)",
+    mediation_prep: "Mediation prep (legacy)",
+    trial_prep: "Trial prep (legacy)",
+    trial_deposition: "Trial deposition (legacy)",
+    client_call: "Client call (legacy)",
+  };
+  return { ...labels, ...extra } as Record<EventKind, string>;
+}
+
+export const EVENT_KIND_LABELS: Record<EventKind, string> = buildEventKindLabels();
+
+/** Filter dropdowns: all kinds, sorted by label; `value: ""` means no filter. */
+export const EVENT_KIND_FILTER_OPTIONS: { value: string; label: string }[] = (() => {
+  const rest = (Object.keys(EVENT_KIND_LABELS) as EventKind[])
+    .map((value) => ({ value, label: EVENT_KIND_LABELS[value] }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+  return [{ value: "", label: "All event types" }, ...rest];
+})();
 
 export function eventKindDisplayLabel(kind: EventKind | undefined): string | null {
   if (!kind || kind === "other_event") return null;
@@ -104,34 +95,7 @@ export function eventKindDisplayLabel(kind: EventKind | undefined): string | nul
 }
 
 export function categoryForManualEventKind(kind: EventKind): EventCategory {
-  switch (kind) {
-    case "trial":
-    case "trial_deposition":
-      return "trial";
-    case "mediation":
-    case "mediation_prep":
-      return "mediation";
-    case "deposition":
-    case "depo_prep":
-    case "trial_prep":
-      return "discovery";
-    case "hearing":
-    case "court_appearance":
-      return "pretrial";
-    case "filing_deadline":
-    case "discovery_deadline":
-    case "demand_response":
-      return "motions";
-    case "client_meeting":
-    case "client_call":
-    case "attorney_review":
-    case "case_strategy":
-    case "internal_meeting":
-    case "document_review":
-    case "other_event":
-    default:
-      return "other";
-  }
+  return categoryForEventKind(kind);
 }
 
 export function suggestedTitleForManualEvent(kind: EventKind, deponentOrSubject: string): string {
@@ -144,6 +108,7 @@ export function suggestedTitleForManualEvent(kind: EventKind, deponentOrSubject:
     case "depo_prep":
       return d ? `Depo prep — ${d}` : "Depo prep";
     case "mediation":
+    case "mediation_session":
       return d ? `Mediation — ${d}` : "Mediation";
     case "mediation_prep":
       return d ? `Mediation prep — ${d}` : "Mediation prep";
@@ -155,7 +120,8 @@ export function suggestedTitleForManualEvent(kind: EventKind, deponentOrSubject:
     case "hearing":
       return d ? `Hearing — ${d}` : "Hearing";
     case "trial":
-      return d ? `Trial — ${d}` : "Trial";
+    case "trial_date":
+      return d ? `Trial — ${d}` : label;
     case "court_appearance":
       return d ? `Court appearance — ${d}` : "Court appearance";
     default:

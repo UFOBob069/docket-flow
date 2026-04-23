@@ -1,14 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { differenceInCalendarDays, parseISO, format, formatDistanceToNow } from "date-fns";
 import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
-import { fetchCasesWithEvents, subscribeActivity } from "@/lib/supabase/repo";
-import type { ActivityEntry, CalendarEvent, Case } from "@/lib/types";
+import { fetchCasesWithEvents, subscribeActivity, subscribeContacts } from "@/lib/supabase/repo";
+import type { ActivityEntry, CalendarEvent, Case, Contact } from "@/lib/types";
+import { AddCalendarEventModal } from "@/components/AddCalendarEventModal";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { useHydrated } from "@/hooks/useHydrated";
 import {
@@ -161,42 +162,58 @@ export default function DashboardPage() {
   const [rows, setRows] = useState<Row[]>([]);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [caseCount, setCaseCount] = useState(0);
+  const [activeCasesForPicker, setActiveCasesForPicker] = useState<Case[]>([]);
+  const [contacts, setContacts] = useState<Contact[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [showAddEvent, setShowAddEvent] = useState(false);
+
+  const loadDashboard = useCallback(async () => {
+    if (!user || !supabaseReady) return;
+    setRefreshing(true);
+    setLoadError(null);
+    try {
+      const supabase = getBrowserSupabase();
+      const bundled = await fetchCasesWithEvents(supabase, user.id);
+      const flat: Row[] = [];
+      const activeList: Case[] = [];
+      const t = todayIso();
+      let activeCases = 0;
+      for (const { case: c, events } of bundled) {
+        if (c.status !== "active") continue;
+        activeCases++;
+        activeList.push(c);
+        for (const e of events) {
+          if (e.completed) continue;
+          if (classify(e.date, t)) flat.push({ case: c, event: e });
+        }
+      }
+      flat.sort((a, b) => a.event.date.localeCompare(b.event.date));
+      activeList.sort((a, b) => a.name.localeCompare(b.name));
+      setRows(flat);
+      setCaseCount(activeCases);
+      setActiveCasesForPicker(activeList);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "Failed to load dashboard");
+    } finally {
+      setRefreshing(false);
+    }
+  }, [user, supabaseReady]);
 
   useEffect(() => {
     if (!supabaseReady || loading) return;
-    if (!user) { router.replace("/login"); return; }
-    let cancelled = false;
-    (async () => {
-      setRefreshing(true);
-      setLoadError(null);
-      try {
-        const supabase = getBrowserSupabase();
-        const bundled = await fetchCasesWithEvents(supabase, user.id);
-        const flat: Row[] = [];
-        const t = todayIso();
-        let activeCases = 0;
-        for (const { case: c, events } of bundled) {
-          if (c.status !== "active") continue;
-          activeCases++;
-          for (const e of events) {
-            if (classify(e.date, t)) flat.push({ case: c, event: e });
-          }
-        }
-        flat.sort((a, b) => a.event.date.localeCompare(b.event.date));
-        if (!cancelled) {
-          setRows(flat);
-          setCaseCount(activeCases);
-        }
-      } catch (e) {
-        if (!cancelled) setLoadError(e instanceof Error ? e.message : "Failed to load dashboard");
-      } finally {
-        if (!cancelled) setRefreshing(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [user, loading, supabaseReady, router, idToken]);
+    if (!user) {
+      router.replace("/login");
+      return;
+    }
+    void loadDashboard();
+  }, [user, loading, supabaseReady, router, loadDashboard]);
+
+  useEffect(() => {
+    if (!supabaseReady || loading || !user) return;
+    const supabase = getBrowserSupabase();
+    return subscribeContacts(supabase, user.id, setContacts);
+  }, [user, loading, supabaseReady]);
 
   useEffect(() => {
     if (!supabaseReady || loading || !user) return;
@@ -244,9 +261,21 @@ export default function DashboardPage() {
             {format(new Date(), "EEEE, MMMM d, yyyy")}
           </p>
         </div>
-        <Link href="/cases/new">
-          <Button variant="pink" size="lg">+ New Case</Button>
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          {activeCasesForPicker.length > 0 && (
+            <Button
+              variant="secondary"
+              size="lg"
+              onClick={() => setShowAddEvent(true)}
+              disabled={!idToken}
+            >
+              Add calendar event
+            </Button>
+          )}
+          <Link href="/cases/new">
+            <Button variant="pink" size="lg">+ New Case</Button>
+          </Link>
+        </div>
       </div>
 
       {/* Stats */}
@@ -311,6 +340,19 @@ export default function DashboardPage() {
           <ActivityFeed entries={activity} />
         </div>
       </div>
+
+      {user && (
+        <AddCalendarEventModal
+          open={showAddEvent}
+          onClose={() => setShowAddEvent(false)}
+          lockedCase={null}
+          casePickerOptions={activeCasesForPicker}
+          contacts={contacts}
+          idToken={idToken}
+          user={{ id: user.id, email: user.email }}
+          onSaved={() => void loadDashboard()}
+        />
+      )}
     </PageWrapper>
   );
 }

@@ -1,24 +1,22 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { format, parseISO } from "date-fns";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
 import { caseDisplayName } from "@/lib/case-display";
 import { googleCalendarDescription } from "@/lib/calendar-payload";
-import { createAdHocCalendarEvent, defaultEndIso } from "@/lib/event-factory";
+import { postCalendarSync } from "@/lib/calendar-client";
+import { defaultEndIso } from "@/lib/event-factory";
+import { getFixedRemindersForKind, isTaxonomyEventKind } from "@/lib/case-event-kinds";
 import {
   ALL_EVENT_KIND_SELECT_GROUPS,
-  DEFAULT_MANUAL_EVENT_KIND,
   EVENT_KIND_LABELS,
-  MANUAL_EVENT_KIND_GROUPS,
   categoryForManualEventKind,
-  manualEventNeedsDeponentField,
-  suggestedTitleForManualEvent,
 } from "@/lib/one-off-events";
-import { DEFAULT_REMINDERS } from "@/lib/reminder-presets";
 import {
   bulkDeleteEvents,
   bulkRescheduleEvents,
@@ -32,11 +30,13 @@ import {
   updateCase,
 } from "@/lib/supabase/repo";
 import type { CalendarEvent, Case, CaseStatus, Contact, EventCategory, EventKind } from "@/lib/types";
+import { AddCalendarEventModal } from "@/components/AddCalendarEventModal";
+import { FixedRemindersReadout } from "@/components/FixedRemindersReadout";
+import { MonthlyEventCalendar } from "@/components/MonthlyEventCalendar";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { ReminderMinutesEditor } from "@/components/ReminderMinutesEditor";
 import { FiveMinuteTimeSelect } from "@/components/FiveMinuteTimeSelect";
 import {
-  defaultLocalStartParts,
   isEndTimeAfterStartTime,
   isoToLocalDateTimeParts,
   localDateTimePartsToIso,
@@ -60,17 +60,6 @@ const catBadge: Record<EventCategory, "trial" | "discovery" | "motions" | "pretr
   pretrial: "pretrial", mediation: "mediation", experts: "experts", other: "other",
 };
 
-async function calendarApi(body: unknown, idToken: string | null): Promise<Response> {
-  return fetch("/api/calendar/sync", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
-    },
-    body: JSON.stringify(body),
-  });
-}
-
 /** Delete body for `/api/calendar/sync` — SOL host rows use `googleHostCalendarId` instead of per-user copies */
 function calendarDeletePayload(ev: CalendarEvent): {
   action: "delete";
@@ -89,6 +78,15 @@ function calendarDeletePayload(ev: CalendarEvent): {
     return { ...base, googleCalendarEventIdsByEmail: ev.googleCalendarEventIdsByEmail };
   }
   return base;
+}
+
+/** Taxonomy kinds always use the fixed reminder list (repair stale DB rows on edit). */
+function calendarEventForEdit(e: CalendarEvent): CalendarEvent {
+  const k = e.eventKind ?? "other_event";
+  if (isTaxonomyEventKind(k)) {
+    return { ...e, remindersMinutes: [...getFixedRemindersForKind(k)] };
+  }
+  return e;
 }
 
 type VerifyResponse = {
@@ -128,18 +126,15 @@ export default function CaseDetailPage() {
   const [verifyResult, setVerifyResult] = useState<VerifyResponse | null>(null);
 
   const [showAddEvent, setShowAddEvent] = useState(false);
-  const [addKind, setAddKind] = useState<EventKind>(DEFAULT_MANUAL_EVENT_KIND);
-  const [addTitle, setAddTitle] = useState("");
-  const [addDeponent, setAddDeponent] = useState("");
-  const [addEventDate, setAddEventDate] = useState("");
-  const [addStartTime, setAddStartTime] = useState("");
-  const [addEndTime, setAddEndTime] = useState("");
-  const [addZoom, setAddZoom] = useState("");
-  const [addExternal, setAddExternal] = useState("");
-  const [addNotes, setAddNotes] = useState("");
-  const [addReminders, setAddReminders] = useState<number[]>(() => [...DEFAULT_REMINDERS.discovery]);
-  /** Extra invite rows: contact ids (same pattern as new case “additional people”) */
-  const [addExtraInviteeRowIds, setAddExtraInviteeRowIds] = useState<string[]>([]);
+  const [eventViewMode, setEventViewMode] = useState<"timeline" | "month">("timeline");
+  const [monthCursor, setMonthCursor] = useState(() => format(new Date(), "yyyy-MM"));
+
+  const eventIdsInMonth = useMemo(
+    () => events.filter((e) => e.date.length >= 7 && e.date.slice(0, 7) === monthCursor).map((e) => e.id),
+    [events, monthCursor]
+  );
+  const allInMonthSelected =
+    eventIdsInMonth.length > 0 && eventIdsInMonth.every((id) => selected.has(id));
 
   useEffect(() => {
     if (!supabaseReady || loading || !user || !caseId) return;
@@ -153,11 +148,6 @@ export default function CaseDetailPage() {
   useEffect(() => {
     if (!loading && supabaseReady && !user) router.replace("/login");
   }, [user, loading, supabaseReady, router]);
-
-  useEffect(() => {
-    const cat = categoryForManualEventKind(addKind);
-    setAddReminders([...DEFAULT_REMINDERS[cat]]);
-  }, [addKind]);
 
   /** Start/end times on the event date while “Edit event” is open (date is the single field above). */
   const [pickStartTime, setPickStartTime] = useState("");
@@ -180,148 +170,6 @@ export default function CaseDetailPage() {
   function flash(message: string) {
     setSuccessMsg(message);
     setTimeout(() => setSuccessMsg(null), 3000);
-  }
-
-  function openAddEventModal() {
-    const { date, time } = defaultLocalStartParts();
-    const kind = DEFAULT_MANUAL_EVENT_KIND;
-    setAddKind(kind);
-    setAddTitle("");
-    setAddDeponent("");
-    setAddEventDate(date);
-    setAddStartTime(time);
-    setAddEndTime("");
-    setAddZoom("");
-    setAddExternal("");
-    setAddNotes("");
-    setAddReminders([...DEFAULT_REMINDERS[categoryForManualEventKind(kind)]]);
-    setAddExtraInviteeRowIds([]);
-    setMsg(null);
-    setShowAddEvent(true);
-  }
-
-  async function saveNewCalendarEvent() {
-    if (!caseId || !c || !user?.id || !idToken) return;
-    if (manualEventNeedsDeponentField(addKind) && !addDeponent.trim()) {
-      setMsg("Enter who is being deposed (or the witness name).");
-      return;
-    }
-    if (!addEventDate.trim()) {
-      setMsg("Event date is required.");
-      return;
-    }
-    if (addEndTime && !addStartTime) {
-      setMsg("Set a start time before an end time — both are on the same day as the event.");
-      return;
-    }
-    if (addStartTime && addEndTime && !isEndTimeAfterStartTime(addStartTime, addEndTime)) {
-      setMsg("End time must be after start time on that day.");
-      return;
-    }
-    if (addStartTime) {
-      const startIso = localDateTimePartsToIso(addEventDate, addStartTime);
-      if (Number.isNaN(new Date(startIso).getTime())) {
-        setMsg("Invalid start time.");
-        return;
-      }
-    }
-    const title =
-      addTitle.trim() || suggestedTitleForManualEvent(addKind, addDeponent);
-    const cat = categoryForManualEventKind(addKind);
-
-    setBusy(true);
-    setMsg(null);
-    try {
-      const supabase = getBrowserSupabase();
-      const displayName = caseDisplayName(c);
-      const inviteContactIds = [
-        ...new Set([...c.assignedContactIds, ...addExtraInviteeRowIds.filter(Boolean)]),
-      ];
-      const attendeeEmails = Array.from(
-        new Set(
-          inviteContactIds
-            .map((id) => contacts.find((ct) => ct.id === id)?.email)
-            .filter((e): e is string => Boolean(e?.trim()))
-            .map((e) => e.trim().toLowerCase())
-        )
-      );
-      if (attendeeEmails.length === 0) {
-        setMsg("Assign contacts with email addresses before syncing to Google Calendar.");
-        setBusy(false);
-        return;
-      }
-
-      const draft = createAdHocCalendarEvent(caseId, user.id, {
-        eventDate: addEventDate,
-        startTime: addStartTime || null,
-        endTime: addStartTime && addEndTime ? addEndTime : null,
-        eventKind: addKind,
-        title,
-        description: addNotes.trim(),
-        category: cat,
-        deponentOrSubject: addDeponent.trim() || null,
-        externalAttendeesText: addExternal.trim() || null,
-        zoomLink: addZoom.trim() || null,
-        remindersMinutes: addReminders,
-      });
-
-      await saveEvent(supabase, caseId, draft);
-
-      const calDesc = googleCalendarDescription(draft);
-      const calRes = await calendarApi(
-        {
-          action: "create",
-          caseName: displayName,
-          sourceLabel: "Manual event",
-          events: [
-            {
-              title: draft.title,
-              date: draft.date,
-              description: calDesc,
-              reminderMinutes: draft.remindersMinutes,
-              startDateTime: draft.startDateTime ?? undefined,
-              endDateTime: draft.endDateTime ?? undefined,
-              ...(draft.zoomLink?.trim() ? { location: draft.zoomLink.trim() } : {}),
-            },
-          ],
-          attendeeEmails,
-        },
-        idToken
-      );
-      const calJson = (await calRes.json()) as {
-        googleEventIds?: string[];
-        googleEventIdMaps?: Record<string, string>[];
-        error?: string;
-      };
-      if (!calRes.ok) throw new Error(calJson.error ?? "Google Calendar sync failed");
-
-      const ge = calJson.googleEventIds?.[0];
-      const map = calJson.googleEventIdMaps?.[0];
-      let saved = draft;
-      if (ge) {
-        saved = {
-          ...draft,
-          googleEventId: ge,
-          ...(map && Object.keys(map).length ? { googleCalendarEventIdsByEmail: map } : {}),
-        };
-        await saveEvent(supabase, caseId, saved);
-      }
-
-      await logActivity(supabase, user.id, {
-        caseId,
-        caseName: displayName,
-        action: "event_created",
-        description: `Added "${saved.title}" (${saved.date})`,
-        userEmail: user.email ?? "",
-      });
-
-      setShowAddEvent(false);
-      flash(`Added "${saved.title}" to the case and calendar`);
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : "Could not add event");
-    } finally {
-      setBusy(false);
-    }
   }
 
   async function runCalendarVerify() {
@@ -380,9 +228,44 @@ export default function CaseDetailPage() {
   }
 
   function toggleAll() {
+    if (eventViewMode === "month") {
+      if (eventIdsInMonth.length === 0) return;
+      if (allInMonthSelected) {
+        setSelected((prev) => {
+          const next = new Set(prev);
+          for (const id of eventIdsInMonth) next.delete(id);
+          return next;
+        });
+      } else {
+        setSelected((prev) => {
+          const next = new Set(prev);
+          for (const id of eventIdsInMonth) next.add(id);
+          return next;
+        });
+      }
+      return;
+    }
     if (selected.size === events.length) setSelected(new Set());
     else setSelected(new Set(events.map((e) => e.id)));
   }
+
+  const caseMonthChips = useMemo(
+    () =>
+      events
+        .filter((e) => e.date.length >= 7 && e.date.slice(0, 7) === monthCursor)
+        .map((ev) => ({
+          id: ev.id,
+          date: ev.date,
+          title: ev.title,
+          selectable: true as const,
+          selected: selected.has(ev.id),
+          onToggleSelect: () => toggleSelect(ev.id),
+          onOpen: () => setEditing(calendarEventForEdit(ev)),
+          dimmed: ev.noiseFlag,
+          completed: ev.completed,
+        })),
+    [events, monthCursor, selected]
+  );
 
   async function setStatus(status: CaseStatus) {
     if (!caseId || !c || !user) return;
@@ -403,7 +286,7 @@ export default function CaseDetailPage() {
         let removed = 0;
         for (const ev of events) {
           if (ev.googleEventId) {
-            const res = await calendarApi(calendarDeletePayload(ev), idToken);
+            const res = await postCalendarSync(calendarDeletePayload(ev), idToken);
             if (!res.ok) {
               const j = (await res.json()) as { error?: string };
               throw new Error(j.error ?? "Calendar delete failed");
@@ -455,12 +338,24 @@ export default function CaseDetailPage() {
     }
   }
 
+  async function toggleEventCompleted(ev: CalendarEvent) {
+    if (!caseId || !c || !user) return;
+    try {
+      const supabase = getBrowserSupabase();
+      const next = { ...ev, completed: !ev.completed, updatedAt: Date.now() };
+      await saveEvent(supabase, caseId, next);
+      flash(next.completed ? "Marked complete — not shown as overdue" : "Marked incomplete");
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Could not update event");
+    }
+  }
+
   async function removeEvent(ev: CalendarEvent) {
     if (!caseId || !c || !user) return;
     setBusy(true); setMsg(null);
     try {
       if (ev.googleEventId) {
-        const res = await calendarApi(calendarDeletePayload(ev), idToken);
+        const res = await postCalendarSync(calendarDeletePayload(ev), idToken);
         if (!res.ok) { const j = (await res.json()) as { error?: string }; throw new Error(j.error ?? "Calendar delete failed"); }
       }
       const supabase = getBrowserSupabase();
@@ -494,7 +389,7 @@ export default function CaseDetailPage() {
       let removed = 0;
       for (const ev of events) {
         if (ev.googleEventId) {
-          const res = await calendarApi(calendarDeletePayload(ev), idToken);
+          const res = await postCalendarSync(calendarDeletePayload(ev), idToken);
           if (!res.ok) {
             const j = (await res.json()) as { error?: string };
             throw new Error(j.error ?? "Calendar delete failed");
@@ -556,9 +451,13 @@ export default function CaseDetailPage() {
           return;
         }
       }
+      const ek = updated.eventKind ?? "other_event";
+      if (isTaxonomyEventKind(ek)) {
+        updated = { ...updated, remindersMinutes: [...getFixedRemindersForKind(ek)] };
+      }
       await saveEvent(supabase, caseId, updated);
       if (updated.googleEventId) {
-        const res = await calendarApi({
+        const res = await postCalendarSync({
           action: "update",
           googleEventId: updated.googleEventId,
           ...(updated.googleHostCalendarId
@@ -599,7 +498,7 @@ export default function CaseDetailPage() {
       const selectedEvents = events.filter((e) => selected.has(e.id));
       for (const ev of selectedEvents) {
         if (ev.googleEventId) {
-          await calendarApi(calendarDeletePayload(ev), idToken);
+          await postCalendarSync(calendarDeletePayload(ev), idToken);
         }
       }
       const supabase = getBrowserSupabase();
@@ -631,7 +530,7 @@ export default function CaseDetailPage() {
         const d = new Date(`${ev.date}T12:00:00`);
         d.setDate(d.getDate() + days);
         const newDate = d.toISOString().slice(0, 10);
-        const res = await calendarApi({
+        const res = await postCalendarSync({
           action: "update",
           googleEventId: ev.googleEventId,
           ...(ev.googleHostCalendarId
@@ -691,7 +590,7 @@ export default function CaseDetailPage() {
               Object.keys(ev.googleCalendarEventIdsByEmail).length > 0))
       );
       if (withGoogle.length > 0 && attendeeEmails.length > 0) {
-        const res = await calendarApi(
+        const res = await postCalendarSync(
           {
             action: "reconcile_team",
             caseName: caseDisplayName(c),
@@ -783,9 +682,9 @@ export default function CaseDetailPage() {
           {c.status === "archived" ? (
             <span
               className="inline-flex cursor-not-allowed items-center justify-center rounded-lg border border-border bg-surface-alt px-4 py-1.5 text-sm font-medium text-text-dim"
-              title="Activate the case to import ASO/DCO deadlines"
+              title="Activate the case to import dates from a document"
             >
-              Import ASO / DCO
+              Import Document with Dates
             </span>
           ) : (
             <>
@@ -793,9 +692,9 @@ export default function CaseDetailPage() {
                 href={`/cases/${caseId}/import-aso`}
                 className="inline-flex items-center justify-center rounded-lg border border-border bg-white px-4 py-1.5 text-sm font-medium text-text shadow-sm transition hover:bg-surface-alt"
               >
-                Import ASO / DCO
+                Import Document with Dates
               </Link>
-              <Button variant="pink" size="sm" disabled={busy} onClick={() => openAddEventModal()}>
+              <Button variant="pink" size="sm" disabled={busy} onClick={() => setShowAddEvent(true)}>
                 Add calendar event
               </Button>
             </>
@@ -808,6 +707,31 @@ export default function CaseDetailPage() {
           >
             {verifyBusy ? "Verifying…" : "Verify Google Calendar"}
           </Button>
+          {c.status === "active" && (
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={busy}
+              title="Removes this case's synced deadlines from team Google Calendars. Does not delete unrelated personal calendar invites."
+              onClick={() => void setStatus("archived")}
+            >
+              <span>Archive case</span>
+              <svg
+                className="h-3.5 w-3.5 shrink-0 text-text-dim"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth={1.75}
+                stroke="currentColor"
+                aria-hidden
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z"
+                />
+              </svg>
+            </Button>
+          )}
           {c.status === "archived" && (
             <Button variant="secondary" size="sm" disabled={busy} onClick={() => void setStatus("active")}>
               Mark active
@@ -971,19 +895,65 @@ export default function CaseDetailPage() {
         </div>
       )}
 
-      {/* Timeline */}
+      {/* Timeline / month calendar */}
       <Card className="mt-6">
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold text-text">Timeline · {events.length} events</h2>
-            <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={toggleAll}>
-              {selected.size === events.length ? "Deselect all" : "Select all"}
-            </button>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-base font-semibold text-text">Events · {events.length}</h2>
+              <div className="mt-2 inline-flex rounded-lg border border-border bg-surface-alt p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setEventViewMode("timeline")}
+                  className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                    eventViewMode === "timeline"
+                      ? "bg-primary text-white shadow-sm"
+                      : "text-text-muted hover:text-text"
+                  }`}
+                >
+                  Timeline
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEventViewMode("month")}
+                  className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                    eventViewMode === "month"
+                      ? "bg-primary text-white shadow-sm"
+                      : "text-text-muted hover:text-text"
+                  }`}
+                >
+                  Month
+                </button>
+              </div>
+            </div>
+            {events.length > 0 && (
+              <button
+                type="button"
+                className="shrink-0 self-start text-xs font-medium text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={eventViewMode === "month" && eventIdsInMonth.length === 0}
+                onClick={toggleAll}
+              >
+                {eventViewMode === "month"
+                  ? allInMonthSelected
+                    ? "Deselect month"
+                    : "Select month"
+                  : selected.size === events.length
+                    ? "Deselect all"
+                    : "Select all"}
+              </button>
+            )}
           </div>
         </CardHeader>
         <CardBody className="p-0">
           {events.length === 0 ? (
             <div className="px-6 py-10 text-center text-sm text-text-muted">No events on this case.</div>
+          ) : eventViewMode === "month" ? (
+            <div className="border-t border-border p-4 sm:p-6">
+              <MonthlyEventCalendar month={monthCursor} chips={caseMonthChips} onMonthChange={setMonthCursor} />
+              {caseMonthChips.length === 0 && (
+                <p className="mt-4 text-center text-sm text-text-muted">No events in {format(parseISO(`${monthCursor}-01`), "MMMM yyyy")}.</p>
+              )}
+            </div>
           ) : (
             <div className="divide-y divide-border">
               {events.map((ev) => (
@@ -1019,8 +989,15 @@ export default function CaseDetailPage() {
                       <Badge variant={catBadge[ev.category]}>{ev.category}</Badge>
                       {ev.googleEventId && <Badge variant="success">Synced</Badge>}
                       {ev.noiseFlag && <Badge variant="warning">{ev.noiseReason ?? "Noise"}</Badge>}
+                      {ev.completed && <Badge variant="success">Complete</Badge>}
                     </div>
-                    <p className="mt-1 text-sm font-medium text-text">{ev.title}</p>
+                    <p
+                      className={`mt-1 text-sm font-medium ${
+                        ev.completed ? "text-text-muted line-through" : "text-text"
+                      }`}
+                    >
+                      {ev.title}
+                    </p>
                     {ev.deponentOrSubject && (
                       <p className="mt-0.5 text-xs text-text-secondary">
                         <span className="font-medium text-text-muted">Deponent / subject:</span>{" "}
@@ -1046,8 +1023,17 @@ export default function CaseDetailPage() {
                         </a>
                       </p>
                     )}
-                    <div className="mt-2 flex gap-3">
-                      <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={() => setEditing({ ...ev })}>Edit</button>
+                    <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
+                      <label className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-text-secondary">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(ev.completed)}
+                          onChange={() => void toggleEventCompleted(ev)}
+                          className="h-4 w-4 rounded border-border text-primary focus:ring-primary/30"
+                        />
+                        Complete
+                      </label>
+                      <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={() => setEditing(calendarEventForEdit(ev))}>Edit</button>
                       <button type="button" className="text-xs font-medium text-danger hover:underline" onClick={() => void removeEvent(ev)} disabled={busy}>Remove</button>
                     </div>
                   </div>
@@ -1058,247 +1044,17 @@ export default function CaseDetailPage() {
         </CardBody>
       </Card>
 
-      {/* Add calendar event (depositions, calls, etc.) */}
-      {showAddEvent && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
-          <Card className="max-h-[min(90vh,880px)] w-full max-w-lg overflow-y-auto shadow-2xl">
-            <CardHeader>
-              <h3 className="text-base font-semibold text-text">Add calendar event</h3>
-              <p className="mt-1 text-xs text-text-muted">
-                Timed entries sync to Google Calendar with reminders; a Zoom or meet link is copied to the Location
-                field when provided.
-              </p>
-            </CardHeader>
-            <CardBody className="space-y-4">
-              <div>
-                <Label required>Event type</Label>
-                <Select
-                  className="mt-1.5"
-                  value={addKind}
-                  onChange={(e) => setAddKind(e.target.value as EventKind)}
-                >
-                  {MANUAL_EVENT_KIND_GROUPS.map((g) => (
-                    <optgroup key={g.topic} label={g.topic}>
-                      {g.options.map((o) => (
-                        <option key={o.value} value={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </Select>
-              </div>
-              <div>
-                <Label>Title</Label>
-                <Input
-                  className="mt-1.5"
-                  value={addTitle}
-                  onChange={(e) => setAddTitle(e.target.value)}
-                  placeholder={suggestedTitleForManualEvent(addKind, addDeponent)}
-                />
-                <p className="mt-1 text-xs text-text-dim">Leave blank to use the suggested title.</p>
-              </div>
-              <div>
-                <Label required={manualEventNeedsDeponentField(addKind)}>
-                  {manualEventNeedsDeponentField(addKind) ? "Who is being deposed" : "Subject or focus (optional)"}
-                </Label>
-                <Input
-                  className="mt-1.5"
-                  value={addDeponent}
-                  onChange={(e) => setAddDeponent(e.target.value)}
-                  placeholder={
-                    manualEventNeedsDeponentField(addKind)
-                      ? "Witness or deponent name"
-                      : "e.g. opposing counsel, topic"
-                  }
-                />
-              </div>
-              <div>
-                <Label required>Event date</Label>
-                <Input
-                  type="date"
-                  className="mt-1.5"
-                  value={addEventDate}
-                  onChange={(e) => setAddEventDate(e.target.value)}
-                />
-                <p className="mt-1 text-xs text-text-dim">
-                  Start and end times are always on this day (no separate start/end dates).
-                </p>
-              </div>
-              <FiveMinuteTimeSelect
-                label="Start time (optional)"
-                value={addStartTime}
-                onChange={(t) => {
-                  setAddStartTime(t);
-                  if (!t) setAddEndTime("");
-                }}
-                allowNoTime
-                noTimeLabel="All day (no specific time)"
-                hint="5-minute increments. All day creates a single calendar day block without a clock time."
-              />
-              <FiveMinuteTimeSelect
-                label="End time (optional)"
-                value={addEndTime}
-                onChange={setAddEndTime}
-                allowNoTime
-                noTimeLabel="Default (+1 hour after start)"
-                disabled={!addStartTime}
-                hint={
-                  addStartTime
-                    ? "Same day as the event date. Leave as default for one hour after start."
-                    : "Set a start time first if you need an end time."
-                }
-              />
-              <div>
-                <Label>Zoom / video link</Label>
-                <Input
-                  className="mt-1.5"
-                  type="url"
-                  inputMode="url"
-                  value={addZoom}
-                  onChange={(e) => setAddZoom(e.target.value)}
-                  placeholder="https://…"
-                />
-                <p className="mt-1 text-xs text-text-muted">
-                  Stored on the case and pushed to Google Calendar as Location so it is easy to find on phones.
-                </p>
-              </div>
-              <div>
-                <Label>External attendees / parties</Label>
-                <Textarea
-                  rows={2}
-                  className="mt-1.5"
-                  value={addExternal}
-                  onChange={(e) => setAddExternal(e.target.value)}
-                  placeholder="Court reporter, opposing counsel, court reporter email, etc."
-                />
-              </div>
-              <div>
-                <Label>Internal notes</Label>
-                <Textarea
-                  rows={3}
-                  className="mt-1.5"
-                  value={addNotes}
-                  onChange={(e) => setAddNotes(e.target.value)}
-                  placeholder="Prep checklist, room details, dial-in, etc."
-                />
-              </div>
-              <div className="rounded-lg border border-border bg-surface-alt/60 px-4 py-3">
-                <Label>Google Calendar invite</Label>
-                <p className="mt-1 text-xs text-text-muted">
-                  Everyone assigned to the case below is included automatically. Add others from your contacts using
-                  the dropdowns (each person needs an email on their contact).
-                </p>
-                <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-text-dim">On this invite</p>
-                <ul className="mt-1.5 space-y-1 text-sm text-text">
-                  {c.assignedContactIds.length === 0 && (
-                    <li className="text-text-muted">No contacts assigned on this case.</li>
-                  )}
-                  {c.assignedContactIds.map((id) => {
-                    const ct = contacts.find((x) => x.id === id);
-                    return (
-                      <li key={id}>
-                        {ct ? (
-                          <>
-                            <span className="font-medium">{ct.name}</span>
-                            <span className="text-text-muted"> ({ct.role.replace("_", " ")})</span>
-                            {ct.email?.trim() ? (
-                              <span className="text-text-dim"> · {ct.email}</span>
-                            ) : (
-                              <span className="text-warning"> · no email — not on calendar invite</span>
-                            )}
-                          </>
-                        ) : (
-                          <span className="text-text-muted">Unknown contact</span>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-                <div className="mt-3 flex items-center justify-between gap-2">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-text-dim">
-                    Add more people (optional)
-                  </p>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="shrink-0"
-                    onClick={() => setAddExtraInviteeRowIds((prev) => [...prev, ""])}
-                  >
-                    + Add person
-                  </Button>
-                </div>
-                <div className="mt-2 space-y-2">
-                  {addExtraInviteeRowIds.length === 0 && (
-                    <p className="text-xs text-text-dim">Use “+ Add person” to invite someone not already on this case.</p>
-                  )}
-                  {addExtraInviteeRowIds.map((rowId, idx) => {
-                    const onCase = new Set(c.assignedContactIds);
-                    const takenElsewhere = new Set(
-                      addExtraInviteeRowIds.filter((id, i) => i !== idx && id).map((id) => id)
-                    );
-                    const rowOptions = contacts
-                      .filter((ct) => Boolean(ct.email?.trim()) && !onCase.has(ct.id))
-                      .filter((ct) => !takenElsewhere.has(ct.id) || ct.id === rowId)
-                      .sort((a, b) => a.name.localeCompare(b.name));
-                    return (
-                      <div key={idx} className="flex items-center gap-2">
-                        <Select
-                          className="min-w-0 flex-1"
-                          value={rowId}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setAddExtraInviteeRowIds((prev) => {
-                              const next = [...prev];
-                              next[idx] = v;
-                              return next;
-                            });
-                          }}
-                        >
-                          <option value="">Select contact…</option>
-                          {rowOptions.map((ct) => (
-                            <option key={ct.id} value={ct.id}>
-                              {ct.name} ({ct.role.replace("_", " ")})
-                            </option>
-                          ))}
-                        </Select>
-                        <button
-                          type="button"
-                          className="shrink-0 text-danger hover:text-danger/80"
-                          aria-label="Remove"
-                          onClick={() =>
-                            setAddExtraInviteeRowIds((prev) => prev.filter((_, j) => j !== idx))
-                          }
-                        >
-                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-                {!contacts.some(
-                  (ct) => Boolean(ct.email?.trim()) && !c.assignedContactIds.includes(ct.id)
-                ) && (
-                  <p className="mt-2 text-xs text-text-dim">
-                    {contacts.some((ct) => Boolean(ct.email?.trim()))
-                      ? "Everyone with an email is already on this case. Add another contact under Contacts to invite them here."
-                      : "Add contacts with email addresses under Contacts to invite them on calendar events."}
-                  </p>
-                )}
-              </div>
-              <ReminderMinutesEditor value={addReminders} onChange={setAddReminders} />
-              <div className="flex justify-end gap-3 pt-2">
-                <Button variant="ghost" onClick={() => setShowAddEvent(false)}>Cancel</Button>
-                <Button variant="pink" disabled={busy} onClick={() => void saveNewCalendarEvent()}>
-                  {busy ? "Saving…" : "Save & sync"}
-                </Button>
-              </div>
-            </CardBody>
-          </Card>
-        </div>
+      {c && user && (
+        <AddCalendarEventModal
+          open={showAddEvent}
+          onClose={() => setShowAddEvent(false)}
+          lockedCase={c}
+          casePickerOptions={[]}
+          contacts={contacts}
+          idToken={idToken}
+          user={{ id: user.id, email: user.email }}
+          onSaved={({ title }) => flash(`Added "${title}" to the case and calendar`)}
+        />
       )}
 
       {/* Edit modal */}
@@ -1312,7 +1068,18 @@ export default function CaseDetailPage() {
                 <Select
                   className="mt-1.5"
                   value={editing.eventKind ?? "other_event"}
-                  onChange={(e) => setEditing({ ...editing, eventKind: e.target.value as EventKind })}
+                  onChange={(e) => {
+                    const k = e.target.value as EventKind;
+                    const next: CalendarEvent = {
+                      ...editing,
+                      eventKind: k,
+                      category: categoryForManualEventKind(k),
+                    };
+                    if (isTaxonomyEventKind(k)) {
+                      next.remindersMinutes = [...getFixedRemindersForKind(k)];
+                    }
+                    setEditing(next);
+                  }}
                 >
                   {ALL_EVENT_KIND_SELECT_GROUPS.map((g) => (
                     <optgroup key={g.topic} label={g.topic}>
@@ -1405,10 +1172,28 @@ export default function CaseDetailPage() {
                 />
               </div>
               <div><Label>Description / internal notes</Label><Textarea rows={4} className="mt-1.5" value={editing.description} onChange={(e) => setEditing({ ...editing, description: e.target.value })} /></div>
-              <ReminderMinutesEditor
-                value={editing.remindersMinutes}
-                onChange={(minutes) => setEditing({ ...editing, remindersMinutes: minutes })}
-              />
+              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-surface-alt/50 px-4 py-3">
+                <input
+                  type="checkbox"
+                  className="mt-1 h-4 w-4 rounded border-border text-primary focus:ring-primary/30"
+                  checked={Boolean(editing.completed)}
+                  onChange={(e) => setEditing({ ...editing, completed: e.target.checked })}
+                />
+                <span>
+                  <span className="block text-sm font-medium text-text">Mark completed</span>
+                  <span className="mt-0.5 block text-xs text-text-muted">
+                    Omits this deadline from overdue, dashboard urgency lists, reminder emails, and the global Calendar tab.
+                  </span>
+                </span>
+              </label>
+              {isTaxonomyEventKind(editing.eventKind ?? "other_event") ? (
+                <FixedRemindersReadout minutes={getFixedRemindersForKind(editing.eventKind ?? "other_event")} />
+              ) : (
+                <ReminderMinutesEditor
+                  value={editing.remindersMinutes}
+                  onChange={(minutes) => setEditing({ ...editing, remindersMinutes: minutes })}
+                />
+              )}
               <div className="flex justify-end gap-3 pt-2">
                 <Button variant="ghost" onClick={() => setEditing(null)}>Cancel</Button>
                 <Button disabled={busy} onClick={() => void saveEdit()}>Save Changes</Button>

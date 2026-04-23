@@ -30,7 +30,7 @@ export type CalendarBatchItem = CreateCalendarEventInput & {
 /** Turns reviewed events into API create payload — one calendar event per included deadline. */
 export function buildCalendarBatches(events: CalendarEvent[]): CalendarBatchItem[] {
   return events
-    .filter((e) => e.included)
+    .filter((e) => e.included && !e.completed)
     .map((e) => ({
       title: e.title,
       date: e.date,

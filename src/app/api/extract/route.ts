@@ -5,7 +5,7 @@ import OpenAI from "openai";
 const pdfParse = require("pdf-parse/lib/pdf-parse.js") as (
   buf: Buffer
 ) => Promise<{ text: string }>;
-import { DEADLINE_SYSTEM_PROMPT } from "@/lib/llm-prompt";
+import { buildDeadlineSystemPrompt } from "@/lib/llm-prompt";
 import type { ExtractedDeadline } from "@/lib/types";
 import { getUserFromBearer } from "@/lib/supabase/auth-server";
 
@@ -91,7 +91,7 @@ export async function POST(req: Request): Promise<Response> {
     const completion = await openai.chat.completions.create({
       model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
       messages: [
-        { role: "system", content: DEADLINE_SYSTEM_PROMPT },
+        { role: "system", content: buildDeadlineSystemPrompt() },
         {
           role: "user",
           content: text.slice(0, 120_000),

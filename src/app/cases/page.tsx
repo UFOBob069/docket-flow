@@ -6,8 +6,9 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
-import { subscribeCases, subscribeContacts } from "@/lib/supabase/repo";
-import type { Case, Contact } from "@/lib/types";
+import { fetchCasesWithEvents, subscribeCases, subscribeContacts } from "@/lib/supabase/repo";
+import { EVENT_KIND_FILTER_OPTIONS } from "@/lib/one-off-events";
+import type { CalendarEvent, Case, Contact, EventKind } from "@/lib/types";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { useHydrated } from "@/hooks/useHydrated";
 import {
@@ -27,16 +28,31 @@ export default function CasesListPage() {
   const router = useRouter();
   const hydrated = useHydrated();
   const { user, loading, supabaseReady } = useAuth();
-  const [cases, setCases] = useState<Case[]>([]);
+  const [bundled, setBundled] = useState<{ case: Case; events: CalendarEvent[] }[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [search, setSearch] = useState("");
   const [attorneyFilter, setAttorneyFilter] = useState("");
   const [paralegalFilter, setParalegalFilter] = useState("");
+  const [eventKindFilter, setEventKindFilter] = useState<EventKind | "">("");
+
+  const cases = useMemo(() => bundled.map((b) => b.case), [bundled]);
+  const eventsByCaseId = useMemo(() => {
+    const m = new Map<string, CalendarEvent[]>();
+    for (const b of bundled) m.set(b.case.id, b.events);
+    return m;
+  }, [bundled]);
 
   useEffect(() => {
     if (!supabaseReady || loading || !user) return;
     const supabase = getBrowserSupabase();
-    const unsubCases = subscribeCases(supabase, user.id, setCases);
+    const loadBundled = () => {
+      void (async () => {
+        const rows = await fetchCasesWithEvents(supabase, user.id);
+        setBundled(rows);
+      })();
+    };
+    loadBundled();
+    const unsubCases = subscribeCases(supabase, user.id, loadBundled);
     const unsubContacts = subscribeContacts(supabase, user.id, setContacts);
     return () => {
       unsubCases();
@@ -71,6 +87,12 @@ export default function CasesListPage() {
     if (paralegalFilter) {
       list = list.filter((c) => c.assignedContactIds[1] === paralegalFilter);
     }
+    if (eventKindFilter) {
+      list = list.filter((c) => {
+        const evs = eventsByCaseId.get(c.id) ?? [];
+        return evs.some((e) => (e.eventKind ?? "other_event") === eventKindFilter);
+      });
+    }
     const q = search.trim().toLowerCase();
     if (q) {
       list = list.filter((c) => {
@@ -94,9 +116,9 @@ export default function CasesListPage() {
       });
     }
     return list;
-  }, [cases, search, attorneyFilter, paralegalFilter, contactById]);
+  }, [cases, search, attorneyFilter, paralegalFilter, eventKindFilter, contactById, eventsByCaseId]);
 
-  const hasFilters = Boolean(attorneyFilter || paralegalFilter || search.trim());
+  const hasFilters = Boolean(attorneyFilter || paralegalFilter || search.trim() || eventKindFilter);
 
   if (!hydrated) return <PageSkeleton />;
 
@@ -142,7 +164,7 @@ export default function CasesListPage() {
         <>
           <Card className="mt-6">
             <CardBody className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
                 <div className="sm:col-span-2">
                   <Label>Search</Label>
                   <Input
@@ -178,6 +200,20 @@ export default function CasesListPage() {
                     ))}
                   </Select>
                 </div>
+                <div>
+                  <Label>Event type</Label>
+                  <Select
+                    className="mt-1.5"
+                    value={eventKindFilter}
+                    onChange={(e) => setEventKindFilter(e.target.value as EventKind | "")}
+                  >
+                    {EVENT_KIND_FILTER_OPTIONS.map((o) => (
+                      <option key={o.value || "all"} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
               </div>
             </CardBody>
           </Card>
@@ -186,8 +222,8 @@ export default function CasesListPage() {
             <p className="mt-6 text-center text-sm text-text-muted">
               {search.trim()
                 ? `No cases match your search.`
-                : attorneyFilter || paralegalFilter
-                  ? "No cases match these assignee filters."
+                : attorneyFilter || paralegalFilter || eventKindFilter
+                  ? "No cases match these filters."
                   : "No cases match your filters."}
             </p>
           ) : (

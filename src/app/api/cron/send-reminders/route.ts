@@ -58,7 +58,8 @@ export async function GET(req: Request): Promise<Response> {
         .from("case_events")
         .select("*")
         .eq("case_id", caseId)
-        .eq("included", true);
+        .eq("included", true)
+        .eq("completed", false);
       if (evErr) throw evErr;
 
       for (const ev of events ?? []) {

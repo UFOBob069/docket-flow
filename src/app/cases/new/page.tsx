@@ -213,7 +213,7 @@ export default function NewCasePage() {
         </Link>
       </div>
       <p className="mt-2 text-sm text-text-muted">
-        Create the case first, then add ASO/DCO deadlines, depositions, and other events from the case page.
+        Create the case first, then import dates from a document, add depositions, and other events from the case page.
       </p>
 
       <Card className="mt-8">
