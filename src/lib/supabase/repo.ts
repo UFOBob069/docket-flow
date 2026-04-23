@@ -177,14 +177,14 @@ export function subscribeCase(
   };
 }
 
+/** All firm cases (RLS is company-wide; `userId` is unused, kept for call-site stability). */
 export async function fetchCasesForUser(
   supabase: SupabaseClient,
-  userId: string
+  _userId: string
 ): Promise<Case[]> {
   const { data, error } = await supabase
     .from("cases")
     .select("*")
-    .eq("user_id", userId)
     .order("updated_at", { ascending: false });
   if (error) throw error;
   return (data ?? []).map((r) => caseFromRow(r as Record<string, unknown>));
@@ -192,12 +192,12 @@ export async function fetchCasesForUser(
 
 export function subscribeCases(
   supabase: SupabaseClient,
-  userId: string,
+  _userId: string,
   cb: (cases: Case[]) => void
 ): Unsubscribe {
   const load = async () => {
     try {
-      const list = await fetchCasesForUser(supabase, userId);
+      const list = await fetchCasesForUser(supabase, _userId);
       cb(list);
     } catch (e) {
       console.warn("[subscribeCases]", e);
@@ -205,11 +205,15 @@ export function subscribeCases(
     }
   };
   void load();
+  const lane =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `r${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const ch = supabase
-    .channel(`cases:user:${userId}`)
+    .channel(`cases:firm:${lane}`)
     .on(
       "postgres_changes",
-      { event: "*", schema: "public", table: "cases", filter: `user_id=eq.${userId}` },
+      { event: "*", schema: "public", table: "cases" },
       () => {
         void load();
       }
@@ -265,16 +269,16 @@ function caseCalendarMetaFromRow(r: Record<string, unknown>): CaseCalendarMeta {
 }
 
 /** Events whose calendar `date` falls in [startDate, endDate] (inclusive), with parent case row. */
+/** Firm-wide events in a date window (`userId` unused; kept for API stability). */
 export async function fetchEventsInDateRange(
   supabase: SupabaseClient,
-  userId: string,
+  _userId: string,
   startDate: string,
   endDate: string
 ): Promise<EventWithCaseRow[]> {
   const { data, error } = await supabase
     .from("case_events")
     .select("*, cases (id, name, client_name, assigned_contact_ids, status)")
-    .eq("user_id", userId)
     .gte("date", startDate)
     .lte("date", endDate)
     .order("date", { ascending: true });
@@ -438,14 +442,14 @@ export async function deleteEvent(
 
 /* ── Contacts ─────────────────────────────────────────────────────── */
 
+/** All firm contacts (`userId` unused). */
 export async function fetchContactsForUser(
   supabase: SupabaseClient,
-  userId: string
+  _userId: string
 ): Promise<Contact[]> {
   const { data, error } = await supabase
     .from("contacts")
     .select("*")
-    .eq("user_id", userId)
     .order("name");
   if (error) throw error;
   return (data ?? []).map((r) => contactFromRow(r as Record<string, unknown>));
@@ -453,12 +457,12 @@ export async function fetchContactsForUser(
 
 export function subscribeContacts(
   supabase: SupabaseClient,
-  userId: string,
+  _userId: string,
   cb: (contacts: Contact[]) => void
 ): Unsubscribe {
   const load = async () => {
     try {
-      const list = await fetchContactsForUser(supabase, userId);
+      const list = await fetchContactsForUser(supabase, _userId);
       cb(list);
     } catch (e) {
       console.warn("[subscribeContacts]", e);
@@ -466,11 +470,15 @@ export function subscribeContacts(
     }
   };
   void load();
+  const lane =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `r${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const ch = supabase
-    .channel(`contacts:user:${userId}`)
+    .channel(`contacts:firm:${lane}`)
     .on(
       "postgres_changes",
-      { event: "*", schema: "public", table: "contacts", filter: `user_id=eq.${userId}` },
+      { event: "*", schema: "public", table: "contacts" },
       () => {
         void load();
       }
@@ -541,15 +549,15 @@ export async function logActivity(
   if (error) throw error;
 }
 
+/** Firm-wide activity feed (`userId` unused). */
 export async function fetchActivity(
   supabase: SupabaseClient,
-  userId: string,
+  _userId: string,
   max: number
 ): Promise<ActivityEntry[]> {
   const { data, error } = await supabase
     .from("activity_log")
     .select("*")
-    .eq("user_id", userId)
     .order("created_at", { ascending: false })
     .limit(max);
   if (error) throw error;
@@ -558,13 +566,13 @@ export async function fetchActivity(
 
 export function subscribeActivity(
   supabase: SupabaseClient,
-  userId: string,
+  _userId: string,
   max: number,
   cb: (entries: ActivityEntry[]) => void
 ): Unsubscribe {
   const load = async () => {
     try {
-      const list = await fetchActivity(supabase, userId, max);
+      const list = await fetchActivity(supabase, _userId, max);
       cb(list);
     } catch (e) {
       console.warn("[subscribeActivity]", e);
@@ -572,11 +580,15 @@ export function subscribeActivity(
     }
   };
   void load();
+  const lane =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `r${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const ch = supabase
-    .channel(`activity:user:${userId}`)
+    .channel(`activity:firm:${lane}`)
     .on(
       "postgres_changes",
-      { event: "*", schema: "public", table: "activity_log", filter: `user_id=eq.${userId}` },
+      { event: "*", schema: "public", table: "activity_log" },
       () => {
         void load();
       }

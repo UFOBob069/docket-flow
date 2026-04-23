@@ -205,7 +205,7 @@ export default function ImportAsoPage() {
     const attorney = contacts.find((c) => c.id === attorneyId);
     const paralegal = contacts.find((c) => c.id === paralegalId);
     if (!attorney?.email || !paralegal?.email) {
-      setErr("Selected contacts must have email addresses.");
+      setErr("Selected contacts must have the email/ID field filled on their contact.");
       return;
     }
     setBusy(true);

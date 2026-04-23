@@ -93,7 +93,7 @@ export default function NewCasePage() {
     const attorney = contacts.find((c) => c.id === attorneyId);
     const paralegal = contacts.find((c) => c.id === paralegalId);
     if (!attorney?.email || !paralegal?.email) {
-      setErr("Selected attorney and paralegal must have email addresses.");
+      setErr("Selected attorney and paralegal must have the email/ID field filled on their contact (use a real email for Google).");
       return;
     }
     const sol = adjustSolWeekendToFriday(

@@ -11,7 +11,7 @@ import { getRemindersForEventKind } from "@/lib/case-event-kinds";
 import { baseEvent } from "@/lib/event-factory";
 import { CASE_IMPORT_CSV_TEMPLATE, parseCasesImportCsv } from "@/lib/import-cases-csv";
 import type { ParsedIcsEvent } from "@/lib/ics-parse";
-import { matchCaseForSolIcsTitle, parseSolGroupCalendarTitle } from "@/lib/sol-ics-title-match";
+import { matchIcsTitleToAssignTo, parseSolGroupCalendarTitle } from "@/lib/sol-ics-title-match";
 import {
   ALL_EVENT_KIND_SELECT_GROUPS,
   categoryForManualEventKind,
@@ -107,21 +107,33 @@ export default function ImportCalendarPage() {
     };
   }, [user, loading, supabaseReady]);
 
-  /** Pre-fill case assignment when SOL group titles include client name (and optional DOL). */
+  const pendingForIcs = useMemo(
+    () =>
+      pendingCases.map((p) => ({
+        draftId: p.draftId,
+        clientName: p.clientName,
+        caseNumber: p.caseNumber,
+        dateOfIncident: p.dateOfIncident,
+      })),
+    [pendingCases]
+  );
+
+  /** Pre-fill assignment: client + case number in title → pending draft or existing case; else SOL client + DOL. */
   useEffect(() => {
-    if (!existingCases.length) return;
+    if (!existingCases.length && !pendingForIcs.length) return;
     setRows((prev) => {
+      if (!prev.length) return prev;
       let changed = false;
       const next = prev.map((r) => {
         if (r.assignTo) return r;
-        const id = matchCaseForSolIcsTitle(r.title, existingCases);
-        if (!id) return r;
+        const assign = matchIcsTitleToAssignTo(r.title, existingCases, pendingForIcs);
+        if (!assign) return r;
         changed = true;
-        return { ...r, assignTo: `existing:${id}` };
+        return { ...r, assignTo: assign };
       });
       return changed ? next : prev;
     });
-  }, [existingCases]);
+  }, [existingCases, pendingForIcs]);
 
   const attorneys = useMemo(() => contacts.filter((c) => c.role === "attorney"), [contacts]);
   const paralegals = useMemo(() => contacts.filter((c) => c.role === "paralegal"), [contacts]);
@@ -156,7 +168,7 @@ export default function ImportCalendarPage() {
       setMsg(
         errors.length
           ? `Added ${parsed.length} case(s) from CSV. Rows not imported: ${errors.join(" ")}`
-          : `Added ${parsed.length} case(s) from CSV. Assign events to “New: …” in step 3.`
+          : `Added ${parsed.length} case(s) from CSV. In step 3, events auto-assign when the calendar title includes that row’s client name and case number (or pick a case manually).`
       );
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Could not read CSV");
@@ -202,22 +214,22 @@ export default function ImportCalendarPage() {
       let autoAssigned = 0;
       setRows(
         list.map((e) => {
-          const caseId = matchCaseForSolIcsTitle(e.title, existingCases);
-          if (caseId) autoAssigned += 1;
+          const assign = matchIcsTitleToAssignTo(e.title, existingCases, pendingForIcs);
+          if (assign) autoAssigned += 1;
           const solTitle = parseSolGroupCalendarTitle(e.title) !== null || /\bSOL\b/i.test(e.title);
           return {
             ...e,
             rowId: uuidv4(),
             included: true,
             eventKind: solTitle ? "sol_milestone" : "other_event",
-            assignTo: caseId ? `existing:${caseId}` : "",
+            assignTo: assign ?? "",
           };
         })
       );
       setMsg(
         `Loaded ${list.length} event(s) from today forward (cutoff uses America/Chicago, same as the rest of DocketFlow).` +
           (autoAssigned > 0
-            ? ` ${autoAssigned} matched an existing case from the client name in the title (e.g. SOL milestones with “… CLIENT … DOL …”).`
+            ? ` ${autoAssigned} auto-assigned when the title includes the case’s client name and case number (or matches a pending CSV row / SOL client + DOL).`
             : "")
       );
     } catch (e) {
@@ -268,7 +280,7 @@ export default function ImportCalendarPage() {
       const att = contacts.find((c) => c.id === d.attorneyId);
       const par = contacts.find((c) => c.id === d.paralegalId);
       if (!att?.email?.trim() || !par?.email?.trim()) {
-        setErr("Attorney and paralegal must have email addresses.");
+        setErr("Attorney and paralegal must have the email/ID field filled on their contact (use a real email for Google invites).");
         return;
       }
     }
@@ -382,10 +394,12 @@ export default function ImportCalendarPage() {
           <span className="font-medium text-text-secondary">today through the next few years</span> are loaded.
           Events are stored in DocketFlow only (labeled “Originally from Google”) — they are{" "}
           <span className="font-medium text-text-secondary">not</span> created or linked in Google Calendar from this
-          app.           Assign each row to an existing case or to a new case you define below. Titles like{" "}
-          <span className="font-mono text-text-secondary">1 WEEK TO SOL - CLIENT NAME - DOL 05-01-24</span> are matched
-          to the case’s <span className="font-medium text-text-secondary">client name</span> (and date of incident if
-          DOL is present) when it is unambiguous.
+          app. Assign each row to an existing case or to a new case you define below. When the title includes both the{" "}
+          <span className="font-medium text-text-secondary">client name</span> and{" "}
+          <span className="font-medium text-text-secondary">case number</span> (same as your CSV / case list), we match
+          an existing case or a pending “New case” row. SOL-style titles like{" "}
+          <span className="font-mono text-text-secondary">1 WEEK TO SOL - CLIENT NAME - DOL 05-01-24</span> still match
+          by client (and date of incident vs DOL) when the case number is not in the title.
         </p>
       </div>
 

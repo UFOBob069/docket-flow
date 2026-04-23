@@ -71,6 +71,89 @@ export function parseSolGroupCalendarTitle(
   return null;
 }
 
+function compactAlnum(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** True if the event title visibly includes this case number (handles extra spaces / hyphen spacing). */
+export function titleContainsCaseNumber(title: string, caseNumber: string): boolean {
+  const raw = caseNumber.trim();
+  if (!raw || raw.length < 3) return false;
+  const t = title.toLowerCase();
+  const n = raw.toLowerCase();
+  if (t.includes(n)) return true;
+  const nc = compactAlnum(n);
+  if (nc.length < 4) return false;
+  return compactAlnum(t).includes(nc);
+}
+
+/** True if the normalized client name appears as a substring of the title (same rules as CSV name match). */
+export function titleContainsClientName(title: string, clientName: string): boolean {
+  const t = normClient(title);
+  if (!clientName.trim()) return false;
+  for (const k of clientNameMatchKeys(clientName)) {
+    if (k.length < 2) continue;
+    if (t.includes(k)) return true;
+  }
+  return false;
+}
+
+/** CSV row / “New case” draft pending ICS import. */
+export type PendingIcsCaseDraft = {
+  draftId: string;
+  clientName: string;
+  caseNumber: string;
+  dateOfIncident: string;
+};
+
+/**
+ * Map an ICS event title to `existing:<caseId>` or `draft:<draftId>` when unambiguous.
+ *
+ * Priority: (1) pending draft where **client name + case number** both appear in the title,
+ * (2) existing case same, (3) existing case **case number only** unique in title,
+ * (4) SOL-style title by **client + DOL** on existing cases only.
+ */
+export function matchIcsTitleToAssignTo(
+  title: string,
+  cases: Case[],
+  pendingDrafts: PendingIcsCaseDraft[]
+): string | null {
+  const parsed = parseSolGroupCalendarTitle(title);
+
+  const pend = pendingDrafts.filter((d) => {
+    const num = d.caseNumber.trim();
+    const cl = d.clientName.trim();
+    return num && cl && titleContainsCaseNumber(title, num) && titleContainsClientName(title, cl);
+  });
+  if (pend.length === 1) return `draft:${pend[0]!.draftId}`;
+  if (pend.length > 1 && parsed?.dolYmd) {
+    const narrowed = pend.filter((d) => d.dateOfIncident.trim() === parsed.dolYmd);
+    if (narrowed.length === 1) return `draft:${narrowed[0]!.draftId}`;
+  }
+
+  const existBoth = cases.filter((c) => {
+    const num = c.caseNumber?.trim() || c.causeNumber?.trim() || "";
+    const cl = c.clientName?.trim() || "";
+    return num && cl && titleContainsCaseNumber(title, num) && titleContainsClientName(title, cl);
+  });
+  if (existBoth.length === 1) return `existing:${existBoth[0]!.id}`;
+  if (existBoth.length > 1 && parsed?.dolYmd) {
+    const narrowed = existBoth.filter((c) => c.dateOfIncident === parsed.dolYmd);
+    if (narrowed.length === 1) return `existing:${narrowed[0]!.id}`;
+  }
+
+  const numOnly = cases.filter((c) => {
+    const num = c.caseNumber?.trim() || c.causeNumber?.trim() || "";
+    return num && titleContainsCaseNumber(title, num);
+  });
+  if (numOnly.length === 1) return `existing:${numOnly[0]!.id}`;
+
+  const solId = matchCaseForSolIcsTitle(title, cases);
+  if (solId) return `existing:${solId}`;
+
+  return null;
+}
+
 /**
  * Pick a single active case when the ICS title matches our SOL export pattern.
  * Uses `clientName` on the case; if several match, uses DOL from the title vs `dateOfIncident`.

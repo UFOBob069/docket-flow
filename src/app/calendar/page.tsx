@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { addDays, endOfMonth, format, parseISO, startOfMonth } from "date-fns";
+import { addDays, differenceInCalendarDays, endOfMonth, format, parseISO, startOfMonth } from "date-fns";
 import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
@@ -75,7 +75,11 @@ function eventKindLabel(kind: CalendarEvent["eventKind"]): string | null {
   return eventKindDisplayLabel(kind);
 }
 
-const TWO_WEEKS_DAYS = 14;
+const DEFAULT_TIMELINE_SPAN_DAYS = 14;
+
+function defaultTimelineEndFromStart(startYmd: string): string {
+  return format(addDays(parseISO(startYmd), DEFAULT_TIMELINE_SPAN_DAYS - 1), "yyyy-MM-dd");
+}
 
 type CalendarViewMode = "timeline" | "month";
 
@@ -87,7 +91,8 @@ export default function CalendarPage() {
   const [activeCasesForPicker, setActiveCasesForPicker] = useState<Case[]>([]);
   const [showAddEvent, setShowAddEvent] = useState(false);
   const [rows, setRows] = useState<EventWithCaseRow[]>([]);
-  const [weeksEndOffsetDays, setWeeksEndOffsetDays] = useState(TWO_WEEKS_DAYS);
+  const [timelineStart, setTimelineStart] = useState(() => todayIso());
+  const [timelineEnd, setTimelineEnd] = useState(() => defaultTimelineEndFromStart(todayIso()));
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -104,10 +109,19 @@ export default function CalendarPage() {
       const end = endOfMonth(start);
       return { rangeStart: format(start, "yyyy-MM-dd"), rangeEnd: format(end, "yyyy-MM-dd") };
     }
-    const rs = todayIso();
-    const re = format(addDays(parseISO(rs), weeksEndOffsetDays - 1), "yyyy-MM-dd");
-    return { rangeStart: rs, rangeEnd: re };
-  }, [viewMode, monthCursor, weeksEndOffsetDays]);
+    return { rangeStart: timelineStart, rangeEnd: timelineEnd };
+  }, [viewMode, monthCursor, timelineStart, timelineEnd]);
+
+  const resetTimelineToDefault = useCallback(() => {
+    const s = todayIso();
+    setTimelineStart(s);
+    setTimelineEnd(defaultTimelineEndFromStart(s));
+  }, []);
+
+  const timelineDayCount =
+    viewMode === "timeline"
+      ? differenceInCalendarDays(parseISO(timelineEnd), parseISO(timelineStart)) + 1
+      : 0;
 
   useEffect(() => {
     if (!supabaseReady || loading || !user) return;
@@ -242,9 +256,7 @@ export default function CalendarPage() {
                 <span className="font-medium text-text">
                   {format(parseISO(rangeStart), "MMM d, yyyy")} – {format(parseISO(rangeEnd), "MMM d, yyyy")}
                 </span>
-                {weeksEndOffsetDays > TWO_WEEKS_DAYS && (
-                  <span className="text-text-dim"> ({weeksEndOffsetDays} days)</span>
-                )}
+                <span className="text-text-dim"> ({timelineDayCount} day{timelineDayCount !== 1 ? "s" : ""})</span>
               </>
             )}
           </p>
@@ -349,6 +361,47 @@ export default function CalendarPage() {
               </Select>
             </div>
           </div>
+
+          {viewMode === "timeline" && (
+            <div className="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:flex-wrap sm:items-end">
+              <div className="flex flex-wrap items-end gap-3">
+                <div>
+                  <Label>From</Label>
+                  <Input
+                    id="cal-range-start"
+                    aria-label="Timeline range start date"
+                    type="date"
+                    className="mt-1.5 w-[11.5rem]"
+                    value={timelineStart}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (!v) return;
+                      setTimelineStart(v);
+                      setTimelineEnd((end) => (end < v ? v : end));
+                    }}
+                  />
+                </div>
+                <div>
+                  <Label>To</Label>
+                  <Input
+                    id="cal-range-end"
+                    aria-label="Timeline range end date"
+                    type="date"
+                    className="mt-1.5 w-[11.5rem]"
+                    value={timelineEnd}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (!v) return;
+                      setTimelineEnd(v < timelineStart ? timelineStart : v);
+                    }}
+                  />
+                </div>
+              </div>
+              <Button type="button" variant="secondary" size="sm" onClick={resetTimelineToDefault}>
+                Reset range
+              </Button>
+            </div>
+          )}
         </CardBody>
       </Card>
 
@@ -441,12 +494,12 @@ export default function CalendarPage() {
             description={
               viewMode === "month"
                 ? "Try another month, clear filters, or add deadlines from a case."
-                : "Adjust filters, load more weeks, or add deadlines from a case."
+                : "Adjust filters, widen the date range, or add deadlines from a case."
             }
             action={
               viewMode === "timeline" ? (
-                <Button variant="secondary" onClick={() => setWeeksEndOffsetDays(TWO_WEEKS_DAYS)}>
-                  Reset window
+                <Button variant="secondary" onClick={resetTimelineToDefault}>
+                  Reset date range
                 </Button>
               ) : (
                 <Button variant="secondary" onClick={() => setMonthCursor(format(new Date(), "yyyy-MM"))}>
@@ -458,20 +511,11 @@ export default function CalendarPage() {
         </div>
       )}
 
-      <div className="mt-8 flex flex-wrap items-center justify-between gap-4 border-t border-border pt-6">
+      <div className="mt-8 border-t border-border pt-6">
         <p className="text-sm text-text-muted">
           {filteredSorted.length} event{filteredSorted.length !== 1 ? "s" : ""} match your filters
           {viewMode === "timeline" ? " in this window." : " in this month."}
         </p>
-        {viewMode === "timeline" ? (
-          <Button
-            variant="secondary"
-            onClick={() => setWeeksEndOffsetDays((d) => d + TWO_WEEKS_DAYS)}
-            disabled={refreshing}
-          >
-            Next 2 weeks
-          </Button>
-        ) : null}
       </div>
 
       {user && (

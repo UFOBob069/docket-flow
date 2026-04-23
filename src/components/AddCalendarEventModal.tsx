@@ -101,7 +101,7 @@ export function AddCalendarEventModal({
 
   useEffect(() => {
     if (!open) return;
-    const { date, time } = defaultLocalStartParts();
+    const { date } = defaultLocalStartParts();
     const firstSec = CASE_EVENT_KIND_SECTIONS[0]!;
     setWizardStep(0);
     setSelectedSectionId(firstSec.id);
@@ -109,7 +109,8 @@ export function AddCalendarEventModal({
     setAddTitle("");
     setAddDeponent("");
     setAddEventDate(date);
-    setAddStartTime(time);
+    /** All-day by default (day row at top of calendar); user can set start/end times if needed. */
+    setAddStartTime("");
     setAddEndTime("");
     setAddZoom("");
     setAddExternal("");
@@ -273,7 +274,8 @@ export function AddCalendarEventModal({
             <div>
               <h3 className="text-base font-semibold text-text">Add calendar event</h3>
               <p className="mt-1 text-xs text-text-muted">
-                Step {stepLabel} · Choose the type, then enter date and details. Reminders are set per event type.
+                Step {stepLabel} · Choose the type, then enter date and details. New events are all-day unless you add
+                times. Reminders follow the event type.
               </p>
             </div>
           </div>
@@ -397,7 +399,8 @@ export function AddCalendarEventModal({
                   onChange={(e) => setAddEventDate(e.target.value)}
                 />
                 <p className="mt-1 text-xs text-text-dim">
-                  Start and end times are always on this day (no separate start/end dates).
+                  Defaults to an <span className="font-medium text-text-secondary">all-day</span> event (whole day at
+                  the top of the calendar). Start and end times, if set, are always on this day.
                 </p>
               </div>
               <FiveMinuteTimeSelect

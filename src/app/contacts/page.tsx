@@ -141,12 +141,13 @@ export default function ContactsPage() {
             <div className="sm:col-span-1 lg:col-span-2">
               <Label required>Email</Label>
               <Input
-                type="email"
+                type="text"
+                autoComplete="off"
                 required
                 className="mt-1.5"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="jane@ramosjames.com"
+                placeholder="jane@firm.com or internal ID"
               />
             </div>
             <div>

@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import type { User } from "@supabase/supabase-js";
+import { getAuthCallbackUrl } from "@/lib/public-site-url";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 
@@ -80,7 +81,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           throw new Error("Supabase is not configured");
         }
         const supabase = createSupabaseBrowserClient();
-        const redirectTo = `${window.location.origin}/auth/callback`;
+        const redirectTo = getAuthCallbackUrl();
         const { data, error } = await supabase.auth.signInWithOAuth({
           provider: "google",
           options: {

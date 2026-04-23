@@ -6,6 +6,13 @@ import { NextResponse, type NextRequest } from "next/server";
  * Safe no-op when Supabase env is missing (local static preview).
  */
 export async function middleware(request: NextRequest): Promise<NextResponse> {
+  /** Supabase sometimes returns the PKCE `code` on `/` when Site URL has no path; exchange needs `/auth/callback`. */
+  if (request.nextUrl.pathname === "/" && request.nextUrl.searchParams.has("code")) {
+    const next = request.nextUrl.clone();
+    next.pathname = "/auth/callback";
+    return NextResponse.redirect(next);
+  }
+
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !anon) {
