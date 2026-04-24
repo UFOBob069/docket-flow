@@ -1,7 +1,26 @@
 import type { Case } from "./types";
 
+/** En dash, em dash, minus sign → ASCII hyphen so SOL titles parse reliably from ICS exports. */
+function normalizeCalendarTitleDashes(title: string): string {
+  return title.replace(/[\u2013\u2014\u2212]/g, "-");
+}
+
 function normClient(s: string): string {
   return s.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Client string for ICS matching: `clientName` when set; otherwise strip a trailing
+ * ` (case #)` suffix from `name` (e.g. `DAVIS MAIGA (1025)` → `DAVIS MAIGA`).
+ */
+function effectiveClientLabel(c: Case): string {
+  const cl = (c.clientName ?? "").trim();
+  if (cl) return cl;
+  const n = (c.name ?? "").trim();
+  if (!n) return "";
+  const m = n.match(/^(.+?)\s*\(\s*[^)]+\)\s*$/);
+  if (m?.[1]?.trim()) return m[1]!.trim();
+  return n;
 }
 
 /** Normalized variants for matching (e.g. `Last, First` vs `First Last`). */
@@ -48,7 +67,7 @@ function parseDolSegment(segment: string): string | null {
 export function parseSolGroupCalendarTitle(
   title: string
 ): { clientName: string; dolYmd: string | null } | null {
-  const parts = title
+  const parts = normalizeCalendarTitleDashes(title.trim())
     .split(/\s+-\s+/)
     .map((p) => p.trim())
     .filter(Boolean);
@@ -118,12 +137,13 @@ export function matchIcsTitleToAssignTo(
   cases: Case[],
   pendingDrafts: PendingIcsCaseDraft[]
 ): string | null {
-  const parsed = parseSolGroupCalendarTitle(title);
+  const t = normalizeCalendarTitleDashes(title.trim());
+  const parsed = parseSolGroupCalendarTitle(t);
 
   const pend = pendingDrafts.filter((d) => {
     const num = d.caseNumber.trim();
     const cl = d.clientName.trim();
-    return num && cl && titleContainsCaseNumber(title, num) && titleContainsClientName(title, cl);
+    return num && cl && titleContainsCaseNumber(t, num) && titleContainsClientName(t, cl);
   });
   if (pend.length === 1) return `draft:${pend[0]!.draftId}`;
   if (pend.length > 1 && parsed?.dolYmd) {
@@ -133,8 +153,8 @@ export function matchIcsTitleToAssignTo(
 
   const existBoth = cases.filter((c) => {
     const num = c.caseNumber?.trim() || c.causeNumber?.trim() || "";
-    const cl = c.clientName?.trim() || "";
-    return num && cl && titleContainsCaseNumber(title, num) && titleContainsClientName(title, cl);
+    const cl = effectiveClientLabel(c);
+    return num && cl && titleContainsCaseNumber(t, num) && titleContainsClientName(t, cl);
   });
   if (existBoth.length === 1) return `existing:${existBoth[0]!.id}`;
   if (existBoth.length > 1 && parsed?.dolYmd) {
@@ -144,11 +164,11 @@ export function matchIcsTitleToAssignTo(
 
   const numOnly = cases.filter((c) => {
     const num = c.caseNumber?.trim() || c.causeNumber?.trim() || "";
-    return num && titleContainsCaseNumber(title, num);
+    return num && titleContainsCaseNumber(t, num);
   });
   if (numOnly.length === 1) return `existing:${numOnly[0]!.id}`;
 
-  const solId = matchCaseForSolIcsTitle(title, cases);
+  const solId = matchCaseForSolIcsTitle(t, cases);
   if (solId) return `existing:${solId}`;
 
   return null;
@@ -159,14 +179,15 @@ export function matchIcsTitleToAssignTo(
  * Uses `clientName` on the case; if several match, uses DOL from the title vs `dateOfIncident`.
  */
 export function matchCaseForSolIcsTitle(title: string, cases: Case[]): string | null {
-  const parsed = parseSolGroupCalendarTitle(title);
+  const t = normalizeCalendarTitleDashes(title.trim());
+  const parsed = parseSolGroupCalendarTitle(t);
   if (!parsed) return null;
 
   const titleKeys = clientNameMatchKeys(parsed.clientName);
   if (titleKeys.size === 0 || [...titleKeys].every((k) => !k)) return null;
 
   const exact = cases.filter((c) => {
-    const cn = c.clientName ?? "";
+    const cn = effectiveClientLabel(c);
     if (!cn.trim()) return false;
     const caseKeys = clientNameMatchKeys(cn);
     for (const tk of titleKeys) {
@@ -179,7 +200,7 @@ export function matchCaseForSolIcsTitle(title: string, cases: Case[]): string | 
   let pool = exact;
   if (pool.length === 0) {
     const fuzzy = cases.filter((c) => {
-      const raw = c.clientName ?? "";
+      const raw = effectiveClientLabel(c);
       if (!raw.trim()) return false;
       const cn = normClient(raw);
       for (const tk of titleKeys) {
