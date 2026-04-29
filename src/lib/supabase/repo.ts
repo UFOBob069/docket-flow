@@ -224,17 +224,40 @@ export function subscribeCases(
   };
 }
 
+/** Max case IDs per `in(...)` query — avoids huge URLs and keeps PostgREST happy. */
+const CASE_IDS_IN_CHUNK = 150;
+
 export async function fetchCasesWithEvents(
   supabase: SupabaseClient,
   userId: string
 ): Promise<{ case: Case; events: CalendarEvent[] }[]> {
   const cases = await fetchCasesForUser(supabase, userId);
-  const result: { case: Case; events: CalendarEvent[] }[] = [];
-  for (const c of cases) {
-    const events = await fetchEventsForCase(supabase, c.id);
-    result.push({ case: c, events });
+  if (!cases.length) return [];
+
+  const eventsByCaseId = new Map<string, CalendarEvent[]>();
+  for (const c of cases) eventsByCaseId.set(c.id, []);
+
+  const caseIds = cases.map((c) => c.id);
+  for (let i = 0; i < caseIds.length; i += CASE_IDS_IN_CHUNK) {
+    const chunk = caseIds.slice(i, i + CASE_IDS_IN_CHUNK);
+    const { data, error } = await supabase
+      .from("case_events")
+      .select("*")
+      .in("case_id", chunk)
+      .order("date", { ascending: true });
+    if (error) throw error;
+    for (const r of data ?? []) {
+      const ev = eventFromRow(r as Record<string, unknown>);
+      const list = eventsByCaseId.get(ev.caseId);
+      if (list) list.push(ev);
+    }
   }
-  return result;
+
+  for (const list of eventsByCaseId.values()) {
+    list.sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  return cases.map((c) => ({ case: c, events: eventsByCaseId.get(c.id) ?? [] }));
 }
 
 export async function fetchEventsForCase(
