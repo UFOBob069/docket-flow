@@ -446,12 +446,14 @@ export function AddCalendarEventModal({
                 value={addEndTime}
                 onChange={setAddEndTime}
                 allowNoTime
-                noTimeLabel="Default (+1 hour after start)"
+                noTimeLabel={
+                  addStartTime ? "Default (+1 hour after start)" : "All-day — no end time"
+                }
                 disabled={!addStartTime}
                 hint={
                   addStartTime
                     ? "Same day as the event date. Leave as default for one hour after start."
-                    : "Set a start time first if you need an end time."
+                    : "End time does not apply while the event is all-day."
                 }
               />
               <div>

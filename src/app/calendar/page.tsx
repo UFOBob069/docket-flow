@@ -16,9 +16,11 @@ import {
 import { isGoogleIcsMirrorEvent } from "@/lib/calendar-event-origin";
 import { compareEventsBySchedule } from "@/lib/event-schedule";
 import { CALENDAR_TIMEZONE } from "@/lib/event-factory";
+import { caseMatchesAssignedRole } from "@/lib/case-assigned-filter";
 import { EVENT_KIND_FILTER_OPTIONS, eventKindDisplayLabel } from "@/lib/one-off-events";
 import type { CalendarEvent, Case, Contact, EventCategory, EventKind } from "@/lib/types";
 import { AddCalendarEventModal } from "@/components/AddCalendarEventModal";
+import { FilterCheckboxList } from "@/components/FilterCheckboxList";
 import { MonthlyEventCalendar } from "@/components/MonthlyEventCalendar";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { useHydrated } from "@/hooks/useHydrated";
@@ -31,7 +33,6 @@ import {
   Input,
   Label,
   PageWrapper,
-  Select,
   Spinner,
 } from "@/components/ui";
 
@@ -97,9 +98,9 @@ export default function CalendarPage() {
   const [refreshing, setRefreshing] = useState(false);
 
   const [search, setSearch] = useState("");
-  const [attorneyFilter, setAttorneyFilter] = useState("");
-  const [paralegalFilter, setParalegalFilter] = useState("");
-  const [eventKindFilter, setEventKindFilter] = useState<EventKind | "">("");
+  const [attorneyFilterIds, setAttorneyFilterIds] = useState<string[]>([]);
+  const [paralegalFilterIds, setParalegalFilterIds] = useState<string[]>([]);
+  const [eventKindFilters, setEventKindFilters] = useState<EventKind[]>([]);
   const [viewMode, setViewMode] = useState<CalendarViewMode>("timeline");
   const [monthCursor, setMonthCursor] = useState(() => format(new Date(), "yyyy-MM"));
 
@@ -177,6 +178,15 @@ export default function CalendarPage() {
   const attorneys = useMemo(() => contacts.filter((c) => c.role === "attorney"), [contacts]);
   const paralegals = useMemo(() => contacts.filter((c) => c.role === "paralegal"), [contacts]);
 
+  const eventKindCheckboxOptions = useMemo(
+    () =>
+      EVENT_KIND_FILTER_OPTIONS.filter((o) => o.value !== "").map((o) => ({
+        id: o.value,
+        label: o.label,
+      })),
+    []
+  );
+
   const contactById = useMemo(() => {
     const m = new Map<string, Contact>();
     for (const c of contacts) m.set(c.id, c);
@@ -188,12 +198,14 @@ export default function CalendarPage() {
     const list = rows.filter(({ event: e, case: c }) => {
       if (c.status !== "active") return false;
       if (!e.included || e.noiseFlag || e.completed) return false;
-      const assign = c.assignedContactIds;
-      const attorneyId = assign[0];
-      const paralegalId = assign[1];
-      if (attorneyFilter && attorneyId !== attorneyFilter) return false;
-      if (paralegalFilter && paralegalId !== paralegalFilter) return false;
-      if (eventKindFilter && (e.eventKind ?? "other_event") !== eventKindFilter) return false;
+      if (!caseMatchesAssignedRole(c, attorneyFilterIds, "attorney", contactById)) return false;
+      if (!caseMatchesAssignedRole(c, paralegalFilterIds, "paralegal", contactById)) return false;
+      if (
+        eventKindFilters.length &&
+        !eventKindFilters.includes((e.eventKind ?? "other_event") as EventKind)
+      ) {
+        return false;
+      }
       if (!q) return true;
       const hay = [
         e.title,
@@ -209,7 +221,7 @@ export default function CalendarPage() {
     });
     list.sort((a, b) => compareEventsBySchedule(a.event, b.event));
     return list;
-  }, [rows, search, attorneyFilter, paralegalFilter, eventKindFilter]);
+  }, [rows, search, attorneyFilterIds, paralegalFilterIds, eventKindFilters, contactById]);
 
   const monthChips = useMemo(
     () =>
@@ -306,7 +318,7 @@ export default function CalendarPage() {
 
       <Card className="mt-6">
         <CardBody className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-6">
             <div className="sm:col-span-2">
               <Label>Search</Label>
               <Input
@@ -316,49 +328,27 @@ export default function CalendarPage() {
                 placeholder="Title, case, client, description…"
               />
             </div>
-            <div>
-              <Label>Attorney</Label>
-              <Select
-                className="mt-1.5"
-                value={attorneyFilter}
-                onChange={(e) => setAttorneyFilter(e.target.value)}
-              >
-                <option value="">All attorneys</option>
-                {attorneys.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div>
-              <Label>Paralegal</Label>
-              <Select
-                className="mt-1.5"
-                value={paralegalFilter}
-                onChange={(e) => setParalegalFilter(e.target.value)}
-              >
-                <option value="">All paralegals</option>
-                {paralegals.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div>
-              <Label>Event type</Label>
-              <Select
-                className="mt-1.5"
-                value={eventKindFilter}
-                onChange={(e) => setEventKindFilter(e.target.value as EventKind | "")}
-              >
-                {EVENT_KIND_FILTER_OPTIONS.map((o) => (
-                  <option key={o.value || "all"} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </Select>
+            <FilterCheckboxList
+              label="Attorneys"
+              options={attorneys.map((c) => ({ id: c.id, label: c.name }))}
+              selectedIds={attorneyFilterIds}
+              onChange={setAttorneyFilterIds}
+              emptyHint="Add attorneys under Contacts."
+            />
+            <FilterCheckboxList
+              label="Paralegals"
+              options={paralegals.map((c) => ({ id: c.id, label: c.name }))}
+              selectedIds={paralegalFilterIds}
+              onChange={setParalegalFilterIds}
+              emptyHint="Add paralegals under Contacts."
+            />
+            <div className="sm:col-span-2">
+              <FilterCheckboxList
+                label="Event types"
+                options={eventKindCheckboxOptions}
+                selectedIds={eventKindFilters}
+                onChange={(ids) => setEventKindFilters(ids as EventKind[])}
+              />
             </div>
           </div>
 

@@ -25,7 +25,7 @@ export function FiveMinuteTimeSelect({
   disabled,
 }: Props) {
   return (
-    <div>
+    <div className={disabled ? "opacity-60" : undefined}>
       <Label required={required}>{label}</Label>
       {hint && <p className="mt-1 text-xs text-text-dim">{hint}</p>}
       <Select

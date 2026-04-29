@@ -37,6 +37,31 @@ function clientNameMatchKeys(name: string): Set<string> {
   return keys;
 }
 
+/**
+ * When several cases fuzzy-match a SOL title token, keep those whose client label
+ * plausibly matches the calendar name (prefix / first word / longer substring).
+ */
+function narrowCasesBySolClientToken(cases: Case[], clientFromTitle: string): Case[] {
+  const token = normClient(clientFromTitle.trim());
+  if (token.length < 2) return [];
+  return cases.filter((c) => {
+    const label = effectiveClientLabel(c);
+    if (!label.trim()) return false;
+    return caseLabelMatchesSolToken(normClient(label), token);
+  });
+}
+
+/** `label` and `token` are already {@link normClient}-normalized. */
+function caseLabelMatchesSolToken(label: string, token: string): boolean {
+  if (!label || !token) return false;
+  if (label === token) return true;
+  if (label.startsWith(token)) return true;
+  const first = label.split(/\s+/)[0] ?? "";
+  if (first.startsWith(token)) return true;
+  if (token.length >= 4 && label.includes(token)) return true;
+  return false;
+}
+
 /** Parse `DOL 05-01-24` or `DOL 5/1/2024` as M/D/Y (US) → YYYY-MM-DD. */
 function parseDolSegment(segment: string): string | null {
   const rest = segment.replace(/^DOL\s+/i, "").trim();
@@ -67,27 +92,40 @@ function parseDolSegment(segment: string): string | null {
 export function parseSolGroupCalendarTitle(
   title: string
 ): { clientName: string; dolYmd: string | null } | null {
-  const parts = normalizeCalendarTitleDashes(title.trim())
+  const normalized = normalizeCalendarTitleDashes(title.trim());
+  const parts = normalized
     .split(/\s+-\s+/)
     .map((p) => p.trim())
     .filter(Boolean);
-  if (parts.length < 2) return null;
 
-  const last = parts[parts.length - 1]!;
-  if (/^DOL\s+/i.test(last)) {
-    if (parts.length < 3) return null;
-    const clientName = parts[parts.length - 2]!.trim();
-    if (!clientName) return null;
-    return { clientName, dolYmd: parseDolSegment(last) };
+  if (parts.length >= 2) {
+    const last = parts[parts.length - 1]!;
+    if (/^DOL\s+/i.test(last)) {
+      if (parts.length < 3) return null;
+      const clientName = parts[parts.length - 2]!.trim();
+      if (!clientName) return null;
+      return { clientName, dolYmd: parseDolSegment(last) };
+    }
+
+    if (/SOL/i.test(parts[0]!)) {
+      const clientName = last.trim();
+      if (!clientName) return null;
+      return { clientName, dolYmd: null };
+    }
   }
 
-  if (/SOL/i.test(parts[0]!)) {
-    const clientName = last.trim();
-    if (!clientName) return null;
-    return { clientName, dolYmd: null };
-  }
-
-  return null;
+  /** Tight hyphen around SOL / DOL (e.g. `SOL-DAVIS-DOL 05-01-24`) when space-dash-space split fails. */
+  const glued = normalized.match(/^(\d+\s+)?WEEKS?\s+TO\s+SOL\s*-\s*(.+)$/i);
+  if (!glued?.[2]) return null;
+  const afterSol = glued[2].trim();
+  const dolBits = afterSol.split(/\s*-\s*DOL\s+/i);
+  const clientName = (dolBits[0] ?? "").trim();
+  if (!clientName) return null;
+  const dolYmd =
+    dolBits.length > 1 && dolBits[1]?.trim()
+      ? parseDolSegment(`DOL ${dolBits[1]!.trim()}`)
+      : null;
+  return { clientName, dolYmd };
 }
 
 function compactAlnum(s: string): string {
@@ -199,7 +237,7 @@ export function matchCaseForSolIcsTitle(title: string, cases: Case[]): string | 
   });
   let pool = exact;
   if (pool.length === 0) {
-    const fuzzy = cases.filter((c) => {
+    pool = cases.filter((c) => {
       const raw = effectiveClientLabel(c);
       if (!raw.trim()) return false;
       const cn = normClient(raw);
@@ -209,20 +247,20 @@ export function matchCaseForSolIcsTitle(title: string, cases: Case[]): string | 
       }
       return false;
     });
-    if (fuzzy.length === 1) pool = fuzzy;
-    else if (fuzzy.length > 1 && parsed.dolYmd) {
-      pool = fuzzy.filter((c) => c.dateOfIncident === parsed.dolYmd);
-    } else {
-      return null;
-    }
+    if (pool.length === 0) return null;
   }
 
-  if (pool.length === 1) return pool[0]!.id;
-
-  if (parsed.dolYmd) {
+  if (parsed.dolYmd && pool.length > 1) {
     const byDol = pool.filter((c) => c.dateOfIncident === parsed.dolYmd);
     if (byDol.length === 1) return byDol[0]!.id;
+    if (byDol.length > 1) pool = byDol;
   }
 
-  return null;
+  if (pool.length > 1) {
+    const narrowed = narrowCasesBySolClientToken(pool, parsed.clientName);
+    if (narrowed.length === 1) return narrowed[0]!.id;
+    if (narrowed.length > 0) pool = narrowed;
+  }
+
+  return pool.length === 1 ? pool[0]!.id : null;
 }

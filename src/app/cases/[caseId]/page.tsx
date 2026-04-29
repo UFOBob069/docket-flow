@@ -16,6 +16,7 @@ import { getFixedRemindersForKind, isTaxonomyEventKind } from "@/lib/case-event-
 import {
   ALL_EVENT_KIND_SELECT_GROUPS,
   EVENT_KIND_LABELS,
+  augmentKindGroupsForEdit,
   categoryForManualEventKind,
 } from "@/lib/one-off-events";
 import {
@@ -136,6 +137,11 @@ export default function CaseDetailPage() {
   );
   const allInMonthSelected =
     eventIdsInMonth.length > 0 && eventIdsInMonth.every((id) => selected.has(id));
+
+  const eventKindSelectGroups = useMemo(
+    () => augmentKindGroupsForEdit(ALL_EVENT_KIND_SELECT_GROUPS, editing?.eventKind),
+    [editing?.eventKind]
+  );
 
   useEffect(() => {
     if (!supabaseReady || loading || !user || !caseId) return;
@@ -1104,7 +1110,7 @@ export default function CaseDetailPage() {
                     setEditing(next);
                   }}
                 >
-                  {ALL_EVENT_KIND_SELECT_GROUPS.map((g) => (
+                  {eventKindSelectGroups.map((g) => (
                     <optgroup key={g.topic} label={g.topic}>
                       {g.options.map((o) => (
                         <option key={o.value} value={o.value}>
@@ -1163,7 +1169,7 @@ export default function CaseDetailPage() {
                 hint={
                   pickStartTime
                     ? "Same day as the event date. Default adds one hour after start."
-                    : "Set a start time first."
+                    : "End time does not apply while the event is date-only / all-day."
                 }
               />
               <div>

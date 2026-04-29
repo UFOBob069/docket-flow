@@ -18,9 +18,9 @@ const navLinks = [
   },
   { href: "/cases/new", label: "New Case", match: (p: string) => p === "/cases/new" },
   {
-    href: "/import-calendar",
-    label: "Import ICS",
-    match: (p: string) => p.startsWith("/import-calendar"),
+    href: "/backfill",
+    label: "Backfill",
+    match: (p: string) => p.startsWith("/backfill"),
   },
   { href: "/contacts", label: "Contacts", match: (p: string) => p.startsWith("/contacts") },
 ];

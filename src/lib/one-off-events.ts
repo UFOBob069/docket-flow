@@ -28,28 +28,34 @@ const SYSTEM_EVENT_KIND_OPTIONS: { value: EventKind; label: string }[] = [
   { value: "aso_dco", label: "Imported scheduling order" },
 ];
 
-const LEGACY_EVENT_KIND_OPTIONS: { value: EventKind; label: string }[] = [
-  { value: "hearing", label: "Hearing (legacy)" },
-  { value: "trial", label: "Trial (legacy)" },
-  { value: "mediation", label: "Mediation (legacy)" },
-  { value: "deposition", label: "Deposition (legacy)" },
-  { value: "court_appearance", label: "Court appearance (legacy)" },
-  { value: "filing_deadline", label: "Filing deadline (legacy)" },
-  { value: "discovery_deadline", label: "Discovery deadline (legacy)" },
-  { value: "demand_response", label: "Demand response (legacy)" },
-  { value: "document_review", label: "Document review (legacy)" },
-  { value: "depo_prep", label: "Depo prep (legacy)" },
-  { value: "mediation_prep", label: "Mediation prep (legacy)" },
-  { value: "trial_prep", label: "Trial prep (legacy)" },
-  { value: "trial_deposition", label: "Trial deposition (legacy)" },
-  { value: "client_call", label: "Client call (legacy)" },
-];
+/** Older rows may still use these kinds; they are hidden from filters and new-event pickers. */
+export const LEGACY_EVENT_KINDS: readonly EventKind[] = [
+  "hearing",
+  "trial",
+  "mediation",
+  "deposition",
+  "court_appearance",
+  "filing_deadline",
+  "discovery_deadline",
+  "demand_response",
+  "document_review",
+  "depo_prep",
+  "mediation_prep",
+  "trial_prep",
+  "trial_deposition",
+  "client_call",
+] as const;
 
-/** Edit-event dropdown: taxonomy + system + legacy. */
+const LEGACY_KIND_SET = new Set<EventKind>(LEGACY_EVENT_KINDS);
+
+export function isLegacyEventKind(kind: EventKind): boolean {
+  return LEGACY_KIND_SET.has(kind);
+}
+
+/** Edit-event dropdown: taxonomy + system (no legacy menu). */
 export const ALL_EVENT_KIND_SELECT_GROUPS: ManualEventKindGroup[] = [
   ...MANUAL_EVENT_KIND_GROUPS,
   { topic: "Imported / system", options: SYSTEM_EVENT_KIND_OPTIONS },
-  { topic: "Legacy", options: LEGACY_EVENT_KIND_OPTIONS },
 ];
 
 function buildEventKindLabels(): Record<EventKind, string> {
@@ -61,29 +67,47 @@ function buildEventKindLabels(): Record<EventKind, string> {
     sol: "SOL",
     sol_milestone: "SOL lead-up",
     aso_dco: "Imported scheduling order",
-    hearing: "Hearing (legacy)",
-    trial: "Trial (legacy)",
-    mediation: "Mediation (legacy)",
-    deposition: "Deposition (legacy)",
-    court_appearance: "Court appearance (legacy)",
-    filing_deadline: "Filing deadline (legacy)",
-    discovery_deadline: "Discovery deadline (legacy)",
-    demand_response: "Demand response (legacy)",
-    document_review: "Document review (legacy)",
-    depo_prep: "Depo prep (legacy)",
-    mediation_prep: "Mediation prep (legacy)",
-    trial_prep: "Trial prep (legacy)",
-    trial_deposition: "Trial deposition (legacy)",
-    client_call: "Client call (legacy)",
+    hearing: "Hearing",
+    trial: "Trial",
+    mediation: "Mediation",
+    deposition: "Deposition",
+    court_appearance: "Court appearance",
+    filing_deadline: "Filing deadline",
+    discovery_deadline: "Discovery deadline",
+    demand_response: "Demand response",
+    document_review: "Document review",
+    depo_prep: "Depo prep",
+    mediation_prep: "Mediation prep",
+    trial_prep: "Trial prep",
+    trial_deposition: "Trial deposition",
+    client_call: "Client call",
   };
   return { ...labels, ...extra } as Record<EventKind, string>;
 }
 
 export const EVENT_KIND_LABELS: Record<EventKind, string> = buildEventKindLabels();
 
-/** Filter dropdowns: all kinds, sorted by label; `value: ""` means no filter. */
+/** If an existing event still has a legacy kind, show it once so the select value is valid. */
+export function augmentKindGroupsForEdit(
+  groups: ManualEventKindGroup[],
+  currentKind: EventKind | undefined
+): ManualEventKindGroup[] {
+  if (!currentKind || !isLegacyEventKind(currentKind)) return groups;
+  const present = groups.some((g) => g.options.some((o) => o.value === currentKind));
+  if (present) return groups;
+  return [
+    ...groups,
+    {
+      topic: "Saved type (legacy)",
+      options: [{ value: currentKind, label: EVENT_KIND_LABELS[currentKind] }],
+    },
+  ];
+}
+
+/** Filter dropdowns: non-legacy kinds only; `value: ""` means no filter. */
 export const EVENT_KIND_FILTER_OPTIONS: { value: string; label: string }[] = (() => {
   const rest = (Object.keys(EVENT_KIND_LABELS) as EventKind[])
+    .filter((k) => !LEGACY_KIND_SET.has(k))
     .map((value) => ({ value, label: EVENT_KIND_LABELS[value] }))
     .sort((a, b) => a.label.localeCompare(b.label));
   return [{ value: "", label: "All event types" }, ...rest];

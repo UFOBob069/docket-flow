@@ -6,9 +6,11 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
+import { caseMatchesAssignedRole } from "@/lib/case-assigned-filter";
 import { fetchCasesWithEvents, subscribeCases, subscribeContacts } from "@/lib/supabase/repo";
 import { EVENT_KIND_FILTER_OPTIONS } from "@/lib/one-off-events";
 import type { CalendarEvent, Case, Contact, EventKind } from "@/lib/types";
+import { FilterCheckboxList } from "@/components/FilterCheckboxList";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { useHydrated } from "@/hooks/useHydrated";
 import {
@@ -21,7 +23,6 @@ import {
   Label,
   PageHeader,
   PageWrapper,
-  Select,
 } from "@/components/ui";
 
 export default function CasesListPage() {
@@ -31,9 +32,9 @@ export default function CasesListPage() {
   const [bundled, setBundled] = useState<{ case: Case; events: CalendarEvent[] }[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [search, setSearch] = useState("");
-  const [attorneyFilter, setAttorneyFilter] = useState("");
-  const [paralegalFilter, setParalegalFilter] = useState("");
-  const [eventKindFilter, setEventKindFilter] = useState<EventKind | "">("");
+  const [attorneyFilterIds, setAttorneyFilterIds] = useState<string[]>([]);
+  const [paralegalFilterIds, setParalegalFilterIds] = useState<string[]>([]);
+  const [eventKindFilters, setEventKindFilters] = useState<EventKind[]>([]);
 
   const cases = useMemo(() => bundled.map((b) => b.case), [bundled]);
   const eventsByCaseId = useMemo(() => {
@@ -79,18 +80,23 @@ export default function CasesListPage() {
     [contacts]
   );
 
+  const eventKindCheckboxOptions = useMemo(
+    () =>
+      EVENT_KIND_FILTER_OPTIONS.filter((o) => o.value !== "").map((o) => ({
+        id: o.value,
+        label: o.label,
+      })),
+    []
+  );
+
   const filtered = useMemo(() => {
     let list = cases;
-    if (attorneyFilter) {
-      list = list.filter((c) => c.assignedContactIds[0] === attorneyFilter);
-    }
-    if (paralegalFilter) {
-      list = list.filter((c) => c.assignedContactIds[1] === paralegalFilter);
-    }
-    if (eventKindFilter) {
+    list = list.filter((c) => caseMatchesAssignedRole(c, attorneyFilterIds, "attorney", contactById));
+    list = list.filter((c) => caseMatchesAssignedRole(c, paralegalFilterIds, "paralegal", contactById));
+    if (eventKindFilters.length) {
       list = list.filter((c) => {
         const evs = eventsByCaseId.get(c.id) ?? [];
-        return evs.some((e) => (e.eventKind ?? "other_event") === eventKindFilter);
+        return evs.some((e) => eventKindFilters.includes((e.eventKind ?? "other_event") as EventKind));
       });
     }
     const q = search.trim().toLowerCase();
@@ -116,9 +122,19 @@ export default function CasesListPage() {
       });
     }
     return list;
-  }, [cases, search, attorneyFilter, paralegalFilter, eventKindFilter, contactById, eventsByCaseId]);
+  }, [
+    cases,
+    search,
+    attorneyFilterIds,
+    paralegalFilterIds,
+    eventKindFilters,
+    contactById,
+    eventsByCaseId,
+  ]);
 
-  const hasFilters = Boolean(attorneyFilter || paralegalFilter || search.trim() || eventKindFilter);
+  const hasFilters = Boolean(
+    attorneyFilterIds.length || paralegalFilterIds.length || search.trim() || eventKindFilters.length
+  );
 
   if (!hydrated) return <PageSkeleton />;
 
@@ -164,7 +180,7 @@ export default function CasesListPage() {
         <>
           <Card className="mt-6">
             <CardBody className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+              <div className="grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-6">
                 <div className="sm:col-span-2">
                   <Label>Search</Label>
                   <Input
@@ -174,45 +190,27 @@ export default function CasesListPage() {
                     placeholder="Client, case number, attorney, paralegal, notes…"
                   />
                 </div>
-                <div>
-                  <Label>Attorney</Label>
-                  <Select
-                    className="mt-1.5"
-                    value={attorneyFilter}
-                    onChange={(e) => setAttorneyFilter(e.target.value)}
-                  >
-                    <option value="">All attorneys</option>
-                    {attorneys.map((a) => (
-                      <option key={a.id} value={a.id}>{a.name}</option>
-                    ))}
-                  </Select>
-                </div>
-                <div>
-                  <Label>Paralegal</Label>
-                  <Select
-                    className="mt-1.5"
-                    value={paralegalFilter}
-                    onChange={(e) => setParalegalFilter(e.target.value)}
-                  >
-                    <option value="">All paralegals</option>
-                    {paralegals.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                  </Select>
-                </div>
-                <div>
-                  <Label>Event type</Label>
-                  <Select
-                    className="mt-1.5"
-                    value={eventKindFilter}
-                    onChange={(e) => setEventKindFilter(e.target.value as EventKind | "")}
-                  >
-                    {EVENT_KIND_FILTER_OPTIONS.map((o) => (
-                      <option key={o.value || "all"} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </Select>
+                <FilterCheckboxList
+                  label="Attorneys"
+                  options={attorneys.map((a) => ({ id: a.id, label: a.name }))}
+                  selectedIds={attorneyFilterIds}
+                  onChange={setAttorneyFilterIds}
+                  emptyHint="Add attorneys under Contacts."
+                />
+                <FilterCheckboxList
+                  label="Paralegals"
+                  options={paralegals.map((p) => ({ id: p.id, label: p.name }))}
+                  selectedIds={paralegalFilterIds}
+                  onChange={setParalegalFilterIds}
+                  emptyHint="Add paralegals under Contacts."
+                />
+                <div className="sm:col-span-2">
+                  <FilterCheckboxList
+                    label="Event types"
+                    options={eventKindCheckboxOptions}
+                    selectedIds={eventKindFilters}
+                    onChange={(ids) => setEventKindFilters(ids as EventKind[])}
+                  />
                 </div>
               </div>
             </CardBody>
@@ -222,7 +220,7 @@ export default function CasesListPage() {
             <p className="mt-6 text-center text-sm text-text-muted">
               {search.trim()
                 ? `No cases match your search.`
-                : attorneyFilter || paralegalFilter || eventKindFilter
+                : attorneyFilterIds.length || paralegalFilterIds.length || eventKindFilters.length
                   ? "No cases match these filters."
                   : "No cases match your filters."}
             </p>
