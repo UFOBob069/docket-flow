@@ -66,6 +66,11 @@ export type EventKind =
   | "attorney_review"
   | "case_strategy"
   | "internal_meeting"
+  /* Scheduling deadlines */
+  | "scheduling_deposition_deadline"
+  | "scheduling_mediation_deadline"
+  | "scheduling_hearing_deadline"
+  | "scheduling_other_deadline"
   | "other_event"
   /* Legacy — court / prep / older manual kinds */
   | "hearing"

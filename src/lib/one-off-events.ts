@@ -158,6 +158,7 @@ export function manualEventNeedsDeponentField(kind: EventKind): boolean {
     kind === "deposition" ||
     kind === "trial_deposition" ||
     kind === "depo_prep" ||
-    kind === "trial_prep"
+    kind === "trial_prep" ||
+    kind === "scheduling_deposition_deadline"
   );
 }

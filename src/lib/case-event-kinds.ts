@@ -196,8 +196,34 @@ export const CASE_EVENT_KIND_SECTIONS: CaseEventKindSection[] = [
     ],
   },
   {
+    id: "scheduling_deadlines",
+    title: "11. Scheduling deadlines",
+    kinds: [
+      {
+        value: "scheduling_deposition_deadline",
+        label: "Deposition Scheduling deadline",
+        remindersMinutes: [20160, 10080],
+      },
+      {
+        value: "scheduling_mediation_deadline",
+        label: "Mediation Scheduling deadline",
+        remindersMinutes: [20160, 10080],
+      },
+      {
+        value: "scheduling_hearing_deadline",
+        label: "Hearing Scheduling deadline",
+        remindersMinutes: [20160, 10080],
+      },
+      {
+        value: "scheduling_other_deadline",
+        label: "Other Scheduling deadline",
+        remindersMinutes: [20160, 10080],
+      },
+    ],
+  },
+  {
     id: "other",
-    title: "11. Other",
+    title: "12. Other",
     kinds: [{ value: "other_event", label: "Other", remindersMinutes: [20160, 10080] }],
   },
 ];
@@ -250,6 +276,7 @@ export function categoryForEventKind(kind: EventKind): EventCategory {
     case "pretrial_exhibit_list_exchange":
     case "hearing":
     case "court_appearance":
+    case "scheduling_hearing_deadline":
       return "pretrial";
     case "trial":
     case "trial_prep":
@@ -259,6 +286,7 @@ export function categoryForEventKind(kind: EventKind): EventCategory {
     case "mediation_prep":
     case "mediation_session":
     case "mediation_completion":
+    case "scheduling_mediation_deadline":
       return "mediation";
     case "deposition":
     case "depo_prep":
@@ -268,6 +296,7 @@ export function categoryForEventKind(kind: EventKind): EventCategory {
     case "discovery_completion_deadline":
     case "discovery_motion_to_compel":
     case "discovery_supplementation":
+    case "scheduling_deposition_deadline":
       return "discovery";
     case "milestone_answer_deadline":
     case "pleadings_amended_deadline":
@@ -299,6 +328,7 @@ export function categoryForEventKind(kind: EventKind): EventCategory {
     case "case_strategy":
     case "internal_meeting":
     case "document_review":
+    case "scheduling_other_deadline":
     case "other_event":
     default:
       return "other";
