@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { addDays, differenceInCalendarDays, endOfMonth, format, parseISO, startOfMonth } from "date-fns";
@@ -20,7 +20,6 @@ import { caseMatchesAssignedRole } from "@/lib/case-assigned-filter";
 import { EVENT_KIND_FILTER_OPTIONS, eventKindDisplayLabel } from "@/lib/one-off-events";
 import type { CalendarEvent, Case, Contact, EventCategory, EventKind } from "@/lib/types";
 import { AddCalendarEventModal } from "@/components/AddCalendarEventModal";
-import { FilterCheckboxList } from "@/components/FilterCheckboxList";
 import { MonthlyEventCalendar } from "@/components/MonthlyEventCalendar";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { useHydrated } from "@/hooks/useHydrated";
@@ -84,6 +83,105 @@ function defaultTimelineEndFromStart(startYmd: string): string {
 
 type CalendarViewMode = "timeline" | "month";
 
+type FilterOption = { id: string; label: string };
+
+function formatRangePill(start: string, end: string): string {
+  return `${format(parseISO(start), "MMM d")} - ${format(parseISO(end), "MMM d")}`;
+}
+
+function FilterMultiSelect({
+  label,
+  options,
+  selectedIds,
+  onChange,
+  placeholder = "Select...",
+}: {
+  label: string;
+  options: FilterOption[];
+  selectedIds: string[];
+  onChange: (ids: string[]) => void;
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      if (wrapRef.current && target && !wrapRef.current.contains(target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [open]);
+
+  const selected = options.filter((o) => selectedIds.includes(o.id));
+  const filtered = options.filter((o) =>
+    o.label.toLowerCase().includes(query.trim().toLowerCase())
+  );
+
+  const toggle = (id: string) => {
+    if (selectedIds.includes(id)) onChange(selectedIds.filter((x) => x !== id));
+    else onChange([...selectedIds, id]);
+  };
+
+  return (
+    <div ref={wrapRef}>
+      <Label>{label}</Label>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="mt-1.5 flex min-h-11 w-full items-center justify-between gap-2 rounded-xl border border-border bg-white px-3 py-2 text-left text-sm shadow-sm transition hover:border-primary/40"
+      >
+        <div className="flex min-w-0 flex-1 flex-wrap gap-1">
+          {selected.length === 0 ? (
+            <span className="text-text-dim">{placeholder}</span>
+          ) : (
+            selected.map((s) => (
+              <span
+                key={s.id}
+                className="inline-flex max-w-full items-center rounded-md bg-surface-alt px-2 py-0.5 text-xs text-text"
+              >
+                <span className="truncate">{s.label}</span>
+              </span>
+            ))
+          )}
+        </div>
+        <span className="text-xs text-text-dim">{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <div className="relative z-40 mt-2 rounded-xl border border-border bg-white p-2 shadow-xl">
+          <Input
+            className="mb-2"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={`Search ${label.toLowerCase()}...`}
+          />
+          <div className="max-h-56 overflow-y-auto">
+            {filtered.map((o) => (
+              <label key={o.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-surface-alt">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-border text-primary"
+                  checked={selectedIds.includes(o.id)}
+                  onChange={() => toggle(o.id)}
+                />
+                <span className="truncate text-sm">{o.label}</span>
+              </label>
+            ))}
+            {filtered.length === 0 && (
+              <p className="px-2 py-2 text-xs text-text-dim">No matches.</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CalendarPage() {
   const router = useRouter();
   const hydrated = useHydrated();
@@ -101,6 +199,8 @@ export default function CalendarPage() {
   const [attorneyFilterIds, setAttorneyFilterIds] = useState<string[]>([]);
   const [paralegalFilterIds, setParalegalFilterIds] = useState<string[]>([]);
   const [eventKindFilters, setEventKindFilters] = useState<EventKind[]>([]);
+  const [showFiltersDrawer, setShowFiltersDrawer] = useState(false);
+  const [showDateModal, setShowDateModal] = useState(false);
   const [viewMode, setViewMode] = useState<CalendarViewMode>("timeline");
   const [monthCursor, setMonthCursor] = useState(() => format(new Date(), "yyyy-MM"));
 
@@ -123,6 +223,9 @@ export default function CalendarPage() {
     viewMode === "timeline"
       ? differenceInCalendarDays(parseISO(timelineEnd), parseISO(timelineStart)) + 1
       : 0;
+
+  const hasCustomDateRange =
+    timelineStart !== todayIso() || timelineEnd !== defaultTimelineEndFromStart(todayIso());
 
   useEffect(() => {
     if (!supabaseReady || loading || !user) return;
@@ -223,6 +326,28 @@ export default function CalendarPage() {
     return list;
   }, [rows, search, attorneyFilterIds, paralegalFilterIds, eventKindFilters, contactById]);
 
+  const activeFilterCount =
+    (attorneyFilterIds.length ? 1 : 0) +
+    (paralegalFilterIds.length ? 1 : 0) +
+    (eventKindFilters.length ? 1 : 0) +
+    (hasCustomDateRange ? 1 : 0);
+
+  const attorneyOptions = useMemo(
+    () => attorneys.map((c) => ({ id: c.id, label: c.name })),
+    [attorneys]
+  );
+  const paralegalOptions = useMemo(
+    () => paralegals.map((c) => ({ id: c.id, label: c.name })),
+    [paralegals]
+  );
+
+  function clearAllFilters() {
+    setAttorneyFilterIds([]);
+    setParalegalFilterIds([]);
+    setEventKindFilters([]);
+    resetTimelineToDefault();
+  }
+
   const monthChips = useMemo(
     () =>
       filteredSorted.map(({ event: e, case: c }) => ({
@@ -249,119 +374,170 @@ export default function CalendarPage() {
 
   return (
     <PageWrapper>
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0 flex-1">
-          <h1 className="text-2xl font-semibold tracking-tight text-text lg:text-3xl">Calendar</h1>
-          <p className="mt-1 text-sm text-text-muted">
-            {viewMode === "month" ? (
-              <>
-                Month view ·{" "}
-                <span className="font-medium text-text">
-                  {format(parseISO(`${monthCursor}-01`), "MMMM yyyy")}
-                </span>
-                {" "}
-                <span className="text-text-dim">({format(parseISO(rangeStart), "MMM d")} – {format(parseISO(rangeEnd), "MMM d, yyyy")})</span>
-              </>
-            ) : (
-              <>
-                Showing{" "}
-                <span className="font-medium text-text">
-                  {format(parseISO(rangeStart), "MMM d, yyyy")} – {format(parseISO(rangeEnd), "MMM d, yyyy")}
-                </span>
-                <span className="text-text-dim"> ({timelineDayCount} day{timelineDayCount !== 1 ? "s" : ""})</span>
-              </>
-            )}
-          </p>
-          <div className="mt-3 inline-flex rounded-lg border border-border bg-surface-alt p-0.5">
-            <button
-              type="button"
-              onClick={() => setViewMode("timeline")}
-              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition sm:text-sm ${
-                viewMode === "timeline"
-                  ? "bg-primary text-white shadow-sm"
-                  : "text-text-muted hover:text-text"
-              }`}
-            >
-              Timeline
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode("month")}
-              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition sm:text-sm ${
-                viewMode === "month"
-                  ? "bg-primary text-white shadow-sm"
-                  : "text-text-muted hover:text-text"
-              }`}
-            >
-              Month
-            </button>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {activeCasesForPicker.length > 0 && (
-            <Button
-              variant="secondary"
-              size="lg"
-              onClick={() => setShowAddEvent(true)}
-              disabled={!idToken}
-            >
-              Add calendar event
-            </Button>
-          )}
-          <Link href="/cases/new">
-            <Button variant="pink" size="lg">
-              + New Case
-            </Button>
-          </Link>
-        </div>
+      <h1 className="text-2xl font-semibold tracking-tight text-text lg:text-3xl">Calendar</h1>
+      <p className="mt-1 text-sm text-text-muted">
+        {viewMode === "month" ? (
+          <>
+            Month view ·{" "}
+            <span className="font-medium text-text">
+              {format(parseISO(`${monthCursor}-01`), "MMMM yyyy")}
+            </span>{" "}
+            <span className="text-text-dim">
+              ({format(parseISO(rangeStart), "MMM d")} - {format(parseISO(rangeEnd), "MMM d, yyyy")})
+            </span>
+          </>
+        ) : (
+          <>
+            Showing{" "}
+            <span className="font-medium text-text">
+              {format(parseISO(rangeStart), "MMM d, yyyy")} - {format(parseISO(rangeEnd), "MMM d, yyyy")}
+            </span>
+            <span className="text-text-dim">
+              {" "}
+              ({timelineDayCount} day{timelineDayCount !== 1 ? "s" : ""})
+            </span>
+          </>
+        )}
+      </p>
+
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <Input
+          className="min-w-72 flex-1"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search title, case, client..."
+        />
+        <button
+          type="button"
+          onClick={() => setShowDateModal(true)}
+          className="rounded-xl border border-border bg-white px-3 py-2 text-sm font-medium shadow-sm transition hover:border-primary/40"
+        >
+          {formatRangePill(rangeStart, rangeEnd)}
+        </button>
+        <Button variant="secondary" onClick={() => setShowFiltersDrawer(true)}>
+          Filters{activeFilterCount ? ` (${activeFilterCount})` : ""}
+        </Button>
+        {activeCasesForPicker.length > 0 && (
+          <Button
+            variant="secondary"
+            onClick={() => setShowAddEvent(true)}
+            disabled={!idToken}
+          >
+            Add calendar event
+          </Button>
+        )}
+        <Link href="/cases/new">
+          <Button variant="pink">+ New Case</Button>
+        </Link>
       </div>
 
-      <Card className="mt-6">
-        <CardBody className="space-y-4">
-          <div className="grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-6">
-            <div className="sm:col-span-2">
-              <Label>Search</Label>
-              <Input
-                className="mt-1.5"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Title, case, client, description…"
-              />
-            </div>
-            <FilterCheckboxList
-              label="Attorneys"
-              options={attorneys.map((c) => ({ id: c.id, label: c.name }))}
-              selectedIds={attorneyFilterIds}
-              onChange={setAttorneyFilterIds}
-              emptyHint="Add attorneys under Contacts."
-            />
-            <FilterCheckboxList
-              label="Paralegals"
-              options={paralegals.map((c) => ({ id: c.id, label: c.name }))}
-              selectedIds={paralegalFilterIds}
-              onChange={setParalegalFilterIds}
-              emptyHint="Add paralegals under Contacts."
-            />
-            <div className="sm:col-span-2">
-              <FilterCheckboxList
-                label="Event types"
-                options={eventKindCheckboxOptions}
-                selectedIds={eventKindFilters}
-                onChange={(ids) => setEventKindFilters(ids as EventKind[])}
-              />
-            </div>
-          </div>
+      <div className="mt-3 inline-flex rounded-lg border border-border bg-surface-alt p-0.5">
+        <button
+          type="button"
+          onClick={() => setViewMode("timeline")}
+          className={`rounded-md px-3 py-1.5 text-xs font-semibold transition sm:text-sm ${
+            viewMode === "timeline"
+              ? "bg-primary text-white shadow-sm"
+              : "text-text-muted hover:text-text"
+          }`}
+        >
+          Timeline
+        </button>
+        <button
+          type="button"
+          onClick={() => setViewMode("month")}
+          className={`rounded-md px-3 py-1.5 text-xs font-semibold transition sm:text-sm ${
+            viewMode === "month"
+              ? "bg-primary text-white shadow-sm"
+              : "text-text-muted hover:text-text"
+          }`}
+        >
+          Month
+        </button>
+      </div>
 
-          {viewMode === "timeline" && (
-            <div className="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:flex-wrap sm:items-end">
-              <div className="flex flex-wrap items-end gap-3">
+      {Boolean(
+        attorneyFilterIds.length ||
+          paralegalFilterIds.length ||
+          eventKindFilters.length ||
+          hasCustomDateRange
+      ) && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {attorneyFilterIds.map((id) => (
+            <button
+              key={`att-${id}`}
+              type="button"
+              onClick={() => setAttorneyFilterIds((prev) => prev.filter((x) => x !== id))}
+              className="rounded-full bg-surface-alt px-2.5 py-1 text-xs text-text"
+            >
+              {(contactById.get(id)?.name ?? id)} ×
+            </button>
+          ))}
+          {paralegalFilterIds.map((id) => (
+            <button
+              key={`par-${id}`}
+              type="button"
+              onClick={() => setParalegalFilterIds((prev) => prev.filter((x) => x !== id))}
+              className="rounded-full bg-surface-alt px-2.5 py-1 text-xs text-text"
+            >
+              {(contactById.get(id)?.name ?? id)} ×
+            </button>
+          ))}
+          {eventKindFilters.map((kind) => (
+            <button
+              key={`kind-${kind}`}
+              type="button"
+              onClick={() => setEventKindFilters((prev) => prev.filter((x) => x !== kind))}
+              className="rounded-full bg-surface-alt px-2.5 py-1 text-xs text-text"
+            >
+              {(eventKindCheckboxOptions.find((o) => o.id === kind)?.label ?? kind)} ×
+            </button>
+          ))}
+          {hasCustomDateRange && (
+            <button
+              type="button"
+              onClick={resetTimelineToDefault}
+              className="rounded-full bg-surface-alt px-2.5 py-1 text-xs text-text"
+            >
+              {formatRangePill(timelineStart, timelineEnd)} ×
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={clearAllFilters}
+            className="text-xs font-medium text-primary hover:underline"
+          >
+            Clear all
+          </button>
+        </div>
+      )}
+
+      {showDateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/25"
+            onClick={() => setShowDateModal(false)}
+            aria-label="Close date picker"
+          />
+          <Card className="relative z-10 w-[min(92vw,420px)] rounded-2xl shadow-2xl">
+            <CardBody className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-semibold text-text">Date range</h3>
+                <button
+                  type="button"
+                  className="text-xs font-medium text-primary hover:underline"
+                  onClick={resetTimelineToDefault}
+                >
+                  Reset
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label>From</Label>
                   <Input
-                    id="cal-range-start"
-                    aria-label="Timeline range start date"
                     type="date"
-                    className="mt-1.5 w-[11.5rem]"
+                    className="mt-1.5"
                     value={timelineStart}
                     onChange={(e) => {
                       const v = e.target.value;
@@ -374,10 +550,8 @@ export default function CalendarPage() {
                 <div>
                   <Label>To</Label>
                   <Input
-                    id="cal-range-end"
-                    aria-label="Timeline range end date"
                     type="date"
-                    className="mt-1.5 w-[11.5rem]"
+                    className="mt-1.5"
                     value={timelineEnd}
                     onChange={(e) => {
                       const v = e.target.value;
@@ -387,13 +561,84 @@ export default function CalendarPage() {
                   />
                 </div>
               </div>
-              <Button type="button" variant="secondary" size="sm" onClick={resetTimelineToDefault}>
-                Reset range
+              <div className="flex justify-end">
+                <Button type="button" onClick={() => setShowDateModal(false)}>
+                  Apply
+                </Button>
+              </div>
+            </CardBody>
+          </Card>
+        </div>
+      )}
+
+      <div
+        className={`fixed inset-0 z-40 transition ${
+          showFiltersDrawer ? "pointer-events-auto" : "pointer-events-none"
+        }`}
+      >
+        <button
+          type="button"
+          className={`absolute inset-0 bg-black/20 transition-opacity ${
+            showFiltersDrawer ? "opacity-100" : "opacity-0"
+          }`}
+          onClick={() => setShowFiltersDrawer(false)}
+          aria-label="Close filters"
+        />
+        <aside
+          className={`absolute right-0 top-0 h-full w-[min(92vw,400px)] border-l border-border bg-white p-4 shadow-2xl transition-transform duration-300 ${
+            showFiltersDrawer ? "translate-x-0" : "translate-x-full"
+          }`}
+        >
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-lg font-semibold text-text">Filters</h3>
+            <button
+              type="button"
+              className="text-sm font-medium text-primary hover:underline"
+              onClick={clearAllFilters}
+            >
+              Clear all
+            </button>
+          </div>
+          <div className="space-y-4">
+            <FilterMultiSelect
+              label="Attorneys"
+              options={attorneyOptions}
+              selectedIds={attorneyFilterIds}
+              onChange={setAttorneyFilterIds}
+              placeholder="Select attorneys"
+            />
+            <FilterMultiSelect
+              label="Paralegals"
+              options={paralegalOptions}
+              selectedIds={paralegalFilterIds}
+              onChange={setParalegalFilterIds}
+              placeholder="Select paralegals"
+            />
+            <FilterMultiSelect
+              label="Event types"
+              options={eventKindCheckboxOptions}
+              selectedIds={eventKindFilters}
+              onChange={(ids) => setEventKindFilters(ids as EventKind[])}
+              placeholder="Select event types"
+            />
+            <div>
+              <Label>Date range</Label>
+              <button
+                type="button"
+                onClick={() => setShowDateModal(true)}
+                className="mt-1.5 w-full rounded-xl border border-border bg-white px-3 py-2 text-left text-sm shadow-sm transition hover:border-primary/40"
+              >
+                {formatRangePill(timelineStart, timelineEnd)}
+              </button>
+            </div>
+            <div className="pt-2">
+              <Button type="button" className="w-full" onClick={() => setShowFiltersDrawer(false)}>
+                Done
               </Button>
             </div>
-          )}
-        </CardBody>
-      </Card>
+          </div>
+        </aside>
+      </div>
 
       {loadError && (
         <div className="mt-6 rounded-lg border border-danger/20 bg-danger-light px-4 py-3" role="alert">

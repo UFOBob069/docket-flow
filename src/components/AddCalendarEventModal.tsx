@@ -76,6 +76,7 @@ export function AddCalendarEventModal({
   const router = useRouter();
   const [wizardStep, setWizardStep] = useState(0);
   const [selectedCaseId, setSelectedCaseId] = useState("");
+  const [caseQuery, setCaseQuery] = useState("");
   const [selectedSectionId, setSelectedSectionId] = useState(CASE_EVENT_KIND_SECTIONS[0]!.id);
   const [addKind, setAddKind] = useState<EventKind>(DEFAULT_CASE_EVENT_KIND);
   const [addTitle, setAddTitle] = useState("");
@@ -122,12 +123,29 @@ export function AddCalendarEventModal({
     if (!lockedCase && casePickerOptions.length) {
       setSelectedCaseId(casePickerOptions[0]!.id);
     }
+    setCaseQuery("");
   }, [open, lockedCase?.id, pickerKey]);
 
   const effectiveCase =
     lockedCase ?? casePickerOptions.find((c) => c.id === selectedCaseId) ?? null;
 
   const fixedReminders = useMemo(() => getFixedRemindersForKind(addKind), [addKind]);
+
+  const filteredCaseOptions = useMemo(() => {
+    const q = caseQuery.trim().toLowerCase();
+    if (!q) return casePickerOptions;
+    return casePickerOptions.filter((c) => {
+      const hay = [
+        caseDisplayName(c),
+        c.clientName ?? "",
+        c.caseNumber ?? "",
+        c.causeNumber ?? "",
+      ]
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [casePickerOptions, caseQuery]);
 
   async function saveNewCalendarEvent() {
     const caseRecord = effectiveCase;
@@ -287,17 +305,31 @@ export function AddCalendarEventModal({
             <>
               <div>
                 <Label required>Case</Label>
-                <Select
+                <Input
                   className="mt-1.5"
-                  value={selectedCaseId}
-                  onChange={(e) => setSelectedCaseId(e.target.value)}
-                >
-                  {casePickerOptions.map((k) => (
-                    <option key={k.id} value={k.id}>
+                  value={caseQuery}
+                  onChange={(e) => setCaseQuery(e.target.value)}
+                  placeholder="Type case name or number..."
+                />
+                <div className="mt-2 max-h-64 overflow-y-auto rounded-lg border border-border bg-white p-1">
+                  {filteredCaseOptions.map((k) => (
+                    <button
+                      key={k.id}
+                      type="button"
+                      onClick={() => setSelectedCaseId(k.id)}
+                      className={`w-full rounded-md px-2 py-2 text-left text-sm transition ${
+                        selectedCaseId === k.id
+                          ? "bg-primary-light text-primary"
+                          : "text-text hover:bg-surface-alt"
+                      }`}
+                    >
                       {caseDisplayName(k)}
-                    </option>
+                    </button>
                   ))}
-                </Select>
+                  {filteredCaseOptions.length === 0 && (
+                    <p className="px-2 py-2 text-xs text-text-dim">No matching cases.</p>
+                  )}
+                </div>
               </div>
               {!selectedCaseId && (
                 <p className="text-sm text-text-muted">Select a case to continue.</p>
