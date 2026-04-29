@@ -26,6 +26,8 @@ export type MonthlyCalendarEventChip = {
   dimmed?: boolean;
   /** Shown with strikethrough (e.g. marked complete). */
   completed?: boolean;
+  /** Past calendar date and not complete — highlighted in the grid. */
+  overdue?: boolean;
   selectable?: boolean;
   selected?: boolean;
   onToggleSelect?: () => void;
@@ -148,7 +150,13 @@ export function MonthlyEventCalendar({
                 {dayChips.map((ch) => (
                   <li key={ch.id}>
                     {ch.selectable && ch.onToggleSelect ? (
-                      <div className="flex items-start gap-1 rounded border border-transparent px-0.5 py-0.5 hover:bg-surface-alt">
+                      <div
+                        className={`flex items-start gap-1 rounded border px-0.5 py-0.5 hover:bg-surface-alt ${
+                          ch.overdue && !ch.completed
+                            ? "border-danger/40 bg-danger/[0.06]"
+                            : "border-transparent"
+                        }`}
+                      >
                         <input
                           type="checkbox"
                           checked={ch.selected}
@@ -173,9 +181,11 @@ export function MonthlyEventCalendar({
                     ) : ch.href ? (
                       <Link
                         href={ch.href}
-                        className={`block rounded border border-transparent px-0.5 py-0.5 text-left hover:bg-surface-alt ${
-                          ch.dimmed ? "opacity-60" : ""
-                        }`}
+                        className={`block rounded border px-0.5 py-0.5 text-left hover:bg-surface-alt ${
+                          ch.overdue && !ch.completed
+                            ? "border-danger/40 bg-danger/[0.06]"
+                            : "border-transparent"
+                        } ${ch.dimmed ? "opacity-60" : ""}`}
                       >
                         <EventChipBody chip={ch} />
                       </Link>
@@ -183,9 +193,11 @@ export function MonthlyEventCalendar({
                       <button
                         type="button"
                         onClick={ch.onOpen}
-                        className={`w-full rounded border border-transparent px-0.5 py-0.5 text-left hover:bg-surface-alt ${
-                          ch.dimmed ? "opacity-60" : ""
-                        }`}
+                        className={`w-full rounded border px-0.5 py-0.5 text-left hover:bg-surface-alt ${
+                          ch.overdue && !ch.completed
+                            ? "border-danger/40 bg-danger/[0.06]"
+                            : "border-transparent"
+                        } ${ch.dimmed ? "opacity-60" : ""}`}
                       >
                         <EventChipBody chip={ch} />
                       </button>
@@ -202,14 +214,21 @@ export function MonthlyEventCalendar({
 }
 
 function EventChipBody({ chip }: { chip: MonthlyCalendarEventChip }) {
+  const overdue = Boolean(chip.overdue && !chip.completed);
   return (
     <span className="min-w-0 flex-1">
       <span
         className={`line-clamp-2 text-[10px] font-medium leading-tight sm:text-xs ${
-          chip.completed ? "text-text-muted line-through" : "text-text"
+          chip.completed ? "text-text-muted line-through" : overdue ? "text-danger" : "text-text"
         }`}
       >
         {chip.title}
+        {overdue && (
+          <span className="ml-0.5 text-[9px] font-semibold uppercase tracking-wide text-danger">
+            {" "}
+            Late
+          </span>
+        )}
         {chip.completed && (
           <span className="ml-0.5 text-[9px] font-semibold uppercase tracking-wide text-success">
             {" "}

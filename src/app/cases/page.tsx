@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { addDays, format, parseISO } from "date-fns";
 import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
@@ -10,7 +11,7 @@ import { caseMatchesAssignedRole } from "@/lib/case-assigned-filter";
 import { fetchCasesWithEvents, subscribeCases, subscribeContacts } from "@/lib/supabase/repo";
 import { EVENT_KIND_FILTER_OPTIONS } from "@/lib/one-off-events";
 import type { CalendarEvent, Case, Contact, EventKind } from "@/lib/types";
-import { FilterCheckboxList } from "@/components/FilterCheckboxList";
+import { FilterMultiSelect } from "@/components/FilterMultiSelect";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { useHydrated } from "@/hooks/useHydrated";
 import {
@@ -21,9 +22,26 @@ import {
   EmptyState,
   Input,
   Label,
-  PageHeader,
   PageWrapper,
 } from "@/components/ui";
+
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+const DEFAULT_SPAN_DAYS = 14;
+
+function defaultEndFromStart(startYmd: string): string {
+  return format(addDays(parseISO(startYmd), DEFAULT_SPAN_DAYS - 1), "yyyy-MM-dd");
+}
+
+function formatRangePill(start: string, end: string): string {
+  return `${format(parseISO(start), "MMM d")} - ${format(parseISO(end), "MMM d")}`;
+}
+
+function eventInDateRange(ev: CalendarEvent, start: string, end: string): boolean {
+  return ev.date >= start && ev.date <= end;
+}
 
 export default function CasesListPage() {
   const router = useRouter();
@@ -35,6 +53,12 @@ export default function CasesListPage() {
   const [attorneyFilterIds, setAttorneyFilterIds] = useState<string[]>([]);
   const [paralegalFilterIds, setParalegalFilterIds] = useState<string[]>([]);
   const [eventKindFilters, setEventKindFilters] = useState<EventKind[]>([]);
+  const [showFiltersDrawer, setShowFiltersDrawer] = useState(false);
+  const [showDateModal, setShowDateModal] = useState(false);
+
+  const [timelineStart, setTimelineStart] = useState(() => todayIso());
+  const [timelineEnd, setTimelineEnd] = useState(() => defaultEndFromStart(todayIso()));
+  const [useEventDateFilter, setUseEventDateFilter] = useState(false);
 
   const cases = useMemo(() => bundled.map((b) => b.case), [bundled]);
   const eventsByCaseId = useMemo(() => {
@@ -89,6 +113,22 @@ export default function CasesListPage() {
     []
   );
 
+  const attorneyOptions = useMemo(
+    () => attorneys.map((c) => ({ id: c.id, label: c.name })),
+    [attorneys]
+  );
+  const paralegalOptions = useMemo(
+    () => paralegals.map((c) => ({ id: c.id, label: c.name })),
+    [paralegals]
+  );
+
+  const resetDateFilter = () => {
+    const s = todayIso();
+    setTimelineStart(s);
+    setTimelineEnd(defaultEndFromStart(s));
+    setUseEventDateFilter(false);
+  };
+
   const filtered = useMemo(() => {
     let list = cases;
     list = list.filter((c) => caseMatchesAssignedRole(c, attorneyFilterIds, "attorney", contactById));
@@ -97,6 +137,12 @@ export default function CasesListPage() {
       list = list.filter((c) => {
         const evs = eventsByCaseId.get(c.id) ?? [];
         return evs.some((e) => eventKindFilters.includes((e.eventKind ?? "other_event") as EventKind));
+      });
+    }
+    if (useEventDateFilter) {
+      list = list.filter((c) => {
+        const evs = eventsByCaseId.get(c.id) ?? [];
+        return evs.some((e) => eventInDateRange(e, timelineStart, timelineEnd));
       });
     }
     const q = search.trim().toLowerCase();
@@ -130,10 +176,30 @@ export default function CasesListPage() {
     eventKindFilters,
     contactById,
     eventsByCaseId,
+    useEventDateFilter,
+    timelineStart,
+    timelineEnd,
   ]);
 
+  const activeFilterCount =
+    (attorneyFilterIds.length ? 1 : 0) +
+    (paralegalFilterIds.length ? 1 : 0) +
+    (eventKindFilters.length ? 1 : 0) +
+    (useEventDateFilter ? 1 : 0);
+
+  function clearAllFilters() {
+    setAttorneyFilterIds([]);
+    setParalegalFilterIds([]);
+    setEventKindFilters([]);
+    resetDateFilter();
+  }
+
   const hasFilters = Boolean(
-    attorneyFilterIds.length || paralegalFilterIds.length || search.trim() || eventKindFilters.length
+    attorneyFilterIds.length ||
+      paralegalFilterIds.length ||
+      search.trim() ||
+      eventKindFilters.length ||
+      useEventDateFilter
   );
 
   if (!hydrated) return <PageSkeleton />;
@@ -150,19 +216,239 @@ export default function CasesListPage() {
 
   return (
     <PageWrapper>
-      <PageHeader
-        title="Cases"
-        subtitle={
-          hasFilters
-            ? `${filtered.length} shown · ${cases.length} total`
-            : `${cases.length} case${cases.length !== 1 ? "s" : ""}`
-        }
-        actions={
-          <Link href="/cases/new">
-            <Button variant="pink" size="lg">+ New Case</Button>
-          </Link>
-        }
-      />
+      <h1 className="text-2xl font-semibold tracking-tight text-text lg:text-3xl">Cases</h1>
+      <p className="mt-1 text-sm text-text-muted">
+        {hasFilters
+          ? `${filtered.length} shown · ${cases.length} total`
+          : `${cases.length} case${cases.length !== 1 ? "s" : ""}`}
+        {useEventDateFilter && (
+          <span className="text-text-dim">
+            {" "}
+            · With an event in {formatRangePill(timelineStart, timelineEnd)}
+          </span>
+        )}
+      </p>
+
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <Input
+          className="min-w-72 flex-1"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search title, case, client..."
+        />
+        <button
+          type="button"
+          onClick={() => setShowDateModal(true)}
+          className="rounded-xl border border-border bg-white px-3 py-2 text-sm font-medium shadow-sm transition hover:border-primary/40"
+        >
+          {useEventDateFilter ? formatRangePill(timelineStart, timelineEnd) : "All dates"}
+        </button>
+        <Button variant="secondary" onClick={() => setShowFiltersDrawer(true)}>
+          Filters{activeFilterCount ? ` (${activeFilterCount})` : ""}
+        </Button>
+        <Link href="/cases/new">
+          <Button variant="pink">+ New Case</Button>
+        </Link>
+      </div>
+
+      {Boolean(
+        attorneyFilterIds.length ||
+          paralegalFilterIds.length ||
+          eventKindFilters.length ||
+          useEventDateFilter
+      ) && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {attorneyFilterIds.map((id) => (
+            <button
+              key={`att-${id}`}
+              type="button"
+              onClick={() => setAttorneyFilterIds((prev) => prev.filter((x) => x !== id))}
+              className="rounded-full bg-surface-alt px-2.5 py-1 text-xs text-text"
+            >
+              {(contactById.get(id)?.name ?? id)} ×
+            </button>
+          ))}
+          {paralegalFilterIds.map((id) => (
+            <button
+              key={`par-${id}`}
+              type="button"
+              onClick={() => setParalegalFilterIds((prev) => prev.filter((x) => x !== id))}
+              className="rounded-full bg-surface-alt px-2.5 py-1 text-xs text-text"
+            >
+              {(contactById.get(id)?.name ?? id)} ×
+            </button>
+          ))}
+          {eventKindFilters.map((kind) => (
+            <button
+              key={`kind-${kind}`}
+              type="button"
+              onClick={() => setEventKindFilters((prev) => prev.filter((x) => x !== kind))}
+              className="rounded-full bg-surface-alt px-2.5 py-1 text-xs text-text"
+            >
+              {(eventKindCheckboxOptions.find((o) => o.id === kind)?.label ?? kind)} ×
+            </button>
+          ))}
+          {useEventDateFilter && (
+            <button
+              type="button"
+              onClick={resetDateFilter}
+              className="rounded-full bg-surface-alt px-2.5 py-1 text-xs text-text"
+            >
+              {formatRangePill(timelineStart, timelineEnd)} ×
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={clearAllFilters}
+            className="text-xs font-medium text-primary hover:underline"
+          >
+            Clear all
+          </button>
+        </div>
+      )}
+
+      {showDateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/25"
+            onClick={() => setShowDateModal(false)}
+            aria-label="Close date picker"
+          />
+          <Card className="relative z-10 w-[min(92vw,420px)] rounded-2xl shadow-2xl">
+            <CardBody className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-semibold text-text">Event date range</h3>
+                <button
+                  type="button"
+                  className="text-xs font-medium text-primary hover:underline"
+                  onClick={resetDateFilter}
+                >
+                  Clear filter
+                </button>
+              </div>
+              <p className="text-xs text-text-muted">
+                Show only cases that have at least one event with a date in this range. Leave cleared to list all
+                cases (other filters still apply).
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>From</Label>
+                  <Input
+                    type="date"
+                    className="mt-1.5"
+                    value={timelineStart}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (!v) return;
+                      setTimelineStart(v);
+                      setTimelineEnd((end) => (end < v ? v : end));
+                      setUseEventDateFilter(true);
+                    }}
+                  />
+                </div>
+                <div>
+                  <Label>To</Label>
+                  <Input
+                    type="date"
+                    className="mt-1.5"
+                    value={timelineEnd}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (!v) return;
+                      setTimelineEnd(v < timelineStart ? timelineStart : v);
+                      setUseEventDateFilter(true);
+                    }}
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="secondary" onClick={() => setShowDateModal(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    setUseEventDateFilter(true);
+                    setShowDateModal(false);
+                  }}
+                >
+                  Apply
+                </Button>
+              </div>
+            </CardBody>
+          </Card>
+        </div>
+      )}
+
+      <div
+        className={`fixed inset-0 z-40 transition ${
+          showFiltersDrawer ? "pointer-events-auto" : "pointer-events-none"
+        }`}
+      >
+        <button
+          type="button"
+          className={`absolute inset-0 bg-black/20 transition-opacity ${
+            showFiltersDrawer ? "opacity-100" : "opacity-0"
+          }`}
+          onClick={() => setShowFiltersDrawer(false)}
+          aria-label="Close filters"
+        />
+        <aside
+          className={`absolute right-0 top-0 h-full w-[min(92vw,400px)] border-l border-border bg-white p-4 shadow-2xl transition-transform duration-300 ${
+            showFiltersDrawer ? "translate-x-0" : "translate-x-full"
+          }`}
+        >
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-lg font-semibold text-text">Filters</h3>
+            <button
+              type="button"
+              className="text-sm font-medium text-primary hover:underline"
+              onClick={clearAllFilters}
+            >
+              Clear all
+            </button>
+          </div>
+          <div className="space-y-4">
+            <FilterMultiSelect
+              label="Attorneys"
+              options={attorneyOptions}
+              selectedIds={attorneyFilterIds}
+              onChange={setAttorneyFilterIds}
+              placeholder="Select attorneys"
+            />
+            <FilterMultiSelect
+              label="Paralegals"
+              options={paralegalOptions}
+              selectedIds={paralegalFilterIds}
+              onChange={setParalegalFilterIds}
+              placeholder="Select paralegals"
+            />
+            <FilterMultiSelect
+              label="Event types"
+              options={eventKindCheckboxOptions}
+              selectedIds={eventKindFilters}
+              onChange={(ids) => setEventKindFilters(ids as EventKind[])}
+              placeholder="Select event types"
+            />
+            <div>
+              <Label>Event date range</Label>
+              <button
+                type="button"
+                onClick={() => setShowDateModal(true)}
+                className="mt-1.5 w-full rounded-xl border border-border bg-white px-3 py-2 text-left text-sm shadow-sm transition hover:border-primary/40"
+              >
+                {useEventDateFilter ? formatRangePill(timelineStart, timelineEnd) : "All dates — tap to filter"}
+              </button>
+            </div>
+            <div className="pt-2">
+              <Button type="button" className="w-full" onClick={() => setShowFiltersDrawer(false)}>
+                Done
+              </Button>
+            </div>
+          </div>
+        </aside>
+      </div>
 
       {cases.length === 0 ? (
         <div className="mt-10">
@@ -178,90 +464,62 @@ export default function CasesListPage() {
         </div>
       ) : (
         <>
-          <Card className="mt-6">
-            <CardBody className="space-y-4">
-              <div className="grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-6">
-                <div className="sm:col-span-2">
-                  <Label>Search</Label>
-                  <Input
-                    className="mt-1.5"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Client, case number, attorney, paralegal, notes…"
-                  />
-                </div>
-                <FilterCheckboxList
-                  label="Attorneys"
-                  options={attorneys.map((a) => ({ id: a.id, label: a.name }))}
-                  selectedIds={attorneyFilterIds}
-                  onChange={setAttorneyFilterIds}
-                  emptyHint="Add attorneys under Contacts."
-                />
-                <FilterCheckboxList
-                  label="Paralegals"
-                  options={paralegals.map((p) => ({ id: p.id, label: p.name }))}
-                  selectedIds={paralegalFilterIds}
-                  onChange={setParalegalFilterIds}
-                  emptyHint="Add paralegals under Contacts."
-                />
-                <div className="sm:col-span-2">
-                  <FilterCheckboxList
-                    label="Event types"
-                    options={eventKindCheckboxOptions}
-                    selectedIds={eventKindFilters}
-                    onChange={(ids) => setEventKindFilters(ids as EventKind[])}
-                  />
-                </div>
-              </div>
-            </CardBody>
-          </Card>
-
           {filtered.length === 0 ? (
             <p className="mt-6 text-center text-sm text-text-muted">
               {search.trim()
                 ? `No cases match your search.`
-                : attorneyFilterIds.length || paralegalFilterIds.length || eventKindFilters.length
+                : attorneyFilterIds.length || paralegalFilterIds.length || eventKindFilters.length || useEventDateFilter
                   ? "No cases match these filters."
                   : "No cases match your filters."}
             </p>
           ) : (
-            <Card className="mt-4">
+            <Card className="mt-6">
               <div className="divide-y divide-border">
-                {filtered.map((c) => (
-                  <Link
-                    key={c.id}
-                    href={`/cases/${c.id}`}
-                    className="flex flex-col gap-1.5 px-6 py-4 transition-colors hover:bg-surface-alt sm:flex-row sm:items-center sm:justify-between"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-text">
-                        {c.name}
-                      </p>
-                      <p className="truncate text-sm text-text-muted">
-                        {c.clientName}
-                      </p>
-                      {(c.caseNumber || c.causeNumber) && (
-                        <p className="mt-0.5 truncate text-xs text-text-dim">
-                          {c.caseNumber && <span>Case #{c.caseNumber}</span>}
-                          {c.caseNumber && c.causeNumber && c.caseNumber !== c.causeNumber && (
-                            <span> · </span>
-                          )}
-                          {c.causeNumber && c.caseNumber !== c.causeNumber && (
-                            <span>Cause {c.causeNumber}</span>
-                          )}
-                        </p>
-                      )}
-                    </div>
-                    <div className="flex shrink-0 items-center gap-3">
-                      <Badge variant={c.status === "active" ? "success" : "default"}>
-                        {c.status}
-                      </Badge>
-                      <svg className="h-4 w-4 text-text-dim" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-                      </svg>
-                    </div>
-                  </Link>
-                ))}
+                {filtered.map((c) => {
+                  const evCount = eventsByCaseId.get(c.id)?.length ?? 0;
+                  return (
+                    <Link
+                      key={c.id}
+                      href={`/cases/${c.id}`}
+                      className="flex flex-col gap-1.5 px-6 py-4 transition-colors hover:bg-surface-alt sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-text">{c.name}</p>
+                        <p className="truncate text-sm text-text-muted">{c.clientName}</p>
+                        {(c.caseNumber || c.causeNumber) && (
+                          <p className="mt-0.5 truncate text-xs text-text-dim">
+                            {c.caseNumber && <span>Case #{c.caseNumber}</span>}
+                            {c.caseNumber && c.causeNumber && c.caseNumber !== c.causeNumber && (
+                              <span> · </span>
+                            )}
+                            {c.causeNumber && c.caseNumber !== c.causeNumber && (
+                              <span>Cause {c.causeNumber}</span>
+                            )}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-3">
+                        <span className="rounded-full bg-surface-alt px-2.5 py-0.5 text-xs font-medium tabular-nums text-text-secondary">
+                          {evCount} event{evCount !== 1 ? "s" : ""}
+                        </span>
+                        <Badge variant={c.status === "active" ? "success" : "default"}>{c.status}</Badge>
+                        <svg
+                          className="h-4 w-4 text-text-dim"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          strokeWidth={1.5}
+                          stroke="currentColor"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M8.25 4.5l7.5 7.5-7.5 7.5"
+                          />
+                        </svg>
+                      </div>
+                    </Link>
+                  );
+                })}
               </div>
             </Card>
           )}

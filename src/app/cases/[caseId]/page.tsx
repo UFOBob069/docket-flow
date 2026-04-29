@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { format, parseISO } from "date-fns";
+import { differenceInCalendarDays, format, parseISO } from "date-fns";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
@@ -43,6 +43,7 @@ import {
   isoToLocalDateTimeParts,
   localDateTimePartsToIso,
 } from "@/lib/five-minute-datetime";
+import { compareEventsBySchedule } from "@/lib/event-schedule";
 import { useHydrated } from "@/hooks/useHydrated";
 import {
   Badge,
@@ -61,6 +62,16 @@ const catBadge: Record<EventCategory, "trial" | "discovery" | "motions" | "pretr
   trial: "trial", discovery: "discovery", motions: "motions",
   pretrial: "pretrial", mediation: "mediation", experts: "experts", other: "other",
 };
+
+function todayYmd(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** Matches dashboard urgency: prior calendar day, not marked complete. */
+function isCalendarEventOverdue(ev: CalendarEvent): boolean {
+  if (ev.completed) return false;
+  return differenceInCalendarDays(parseISO(ev.date), parseISO(todayYmd())) < 0;
+}
 
 /** Delete body for `/api/calendar/sync` — SOL host rows use `googleHostCalendarId` instead of per-user copies */
 function calendarDeletePayload(ev: CalendarEvent): {
@@ -141,6 +152,11 @@ export default function CaseDetailPage() {
   const eventKindSelectGroups = useMemo(
     () => augmentKindGroupsForEdit(ALL_EVENT_KIND_SELECT_GROUPS, editing?.eventKind),
     [editing?.eventKind]
+  );
+
+  const sortedEvents = useMemo(
+    () => [...events].sort(compareEventsBySchedule),
+    [events]
   );
 
   useEffect(() => {
@@ -271,6 +287,7 @@ export default function CaseDetailPage() {
           onOpen: () => setEditing(calendarEventForEdit(ev)),
           dimmed: ev.noiseFlag,
           completed: ev.completed,
+          overdue: isCalendarEventOverdue(ev),
         })),
     [events, monthCursor, selected]
   );
@@ -691,6 +708,10 @@ export default function CaseDetailPage() {
               </>
             )}
             <Badge variant={c.status === "active" ? "success" : "default"}>{c.status}</Badge>
+            <span className="text-border-strong">·</span>
+            <span className="text-sm text-text-secondary">
+              {events.length} event{events.length !== 1 ? "s" : ""}
+            </span>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -971,8 +992,15 @@ export default function CaseDetailPage() {
             </div>
           ) : (
             <div className="divide-y divide-border">
-              {events.map((ev) => (
-                <div key={ev.id} className={`flex gap-4 px-6 py-4 transition-colors ${selected.has(ev.id) ? "bg-primary/[0.04]" : ""}`}>
+              {sortedEvents.map((ev) => {
+                const overdue = isCalendarEventOverdue(ev);
+                return (
+                <div
+                  key={ev.id}
+                  className={`flex gap-4 px-6 py-4 transition-colors ${
+                    selected.has(ev.id) ? "bg-primary/[0.04]" : ""
+                  } ${overdue ? "border-l-4 border-l-danger bg-danger/[0.05]" : ""}`}
+                >
                   <div className="flex flex-col items-center gap-1 pt-0.5">
                     <input
                       type="checkbox"
@@ -984,7 +1012,13 @@ export default function CaseDetailPage() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-semibold tabular-nums text-text">{ev.date}</span>
+                      <span
+                        className={`text-sm font-semibold tabular-nums ${
+                          overdue ? "text-danger" : "text-text"
+                        }`}
+                      >
+                        {ev.date}
+                      </span>
                       {ev.startDateTime && (
                         <span className="text-xs font-medium text-text-secondary">
                           {new Date(ev.startDateTime).toLocaleString(undefined, {
@@ -1008,11 +1042,16 @@ export default function CaseDetailPage() {
                         ev.googleEventId && <Badge variant="success">Synced</Badge>
                       )}
                       {ev.noiseFlag && <Badge variant="warning">{ev.noiseReason ?? "Noise"}</Badge>}
+                      {overdue && <Badge variant="danger">Overdue</Badge>}
                       {ev.completed && <Badge variant="success">Complete</Badge>}
                     </div>
                     <p
                       className={`mt-1 text-sm font-medium ${
-                        ev.completed ? "text-text-muted line-through" : "text-text"
+                        ev.completed
+                          ? "text-text-muted line-through"
+                          : overdue
+                            ? "text-danger"
+                            : "text-text"
                       }`}
                     >
                       {ev.title}
@@ -1057,7 +1096,8 @@ export default function CaseDetailPage() {
                     </div>
                   </div>
                 </div>
-              ))}
+              );
+              })}
             </div>
           )}
         </CardBody>
