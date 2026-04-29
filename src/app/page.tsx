@@ -160,6 +160,7 @@ export default function DashboardPage() {
   const hydrated = useHydrated();
   const { user, loading, idToken, supabaseReady } = useAuth();
   const [rows, setRows] = useState<Row[]>([]);
+  const [totalDeadlineCount, setTotalDeadlineCount] = useState(0);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [caseCount, setCaseCount] = useState(0);
   const [activeCasesForPicker, setActiveCasesForPicker] = useState<Case[]>([]);
@@ -179,18 +180,21 @@ export default function DashboardPage() {
       const activeList: Case[] = [];
       const t = todayIso();
       let activeCases = 0;
+      let totalDeadlines = 0;
       for (const { case: c, events } of bundled) {
         if (c.status !== "active") continue;
         activeCases++;
         activeList.push(c);
         for (const e of events) {
           if (e.completed) continue;
+          totalDeadlines++;
           if (classify(e.date, t)) flat.push({ case: c, event: e });
         }
       }
       flat.sort((a, b) => a.event.date.localeCompare(b.event.date));
       activeList.sort((a, b) => a.name.localeCompare(b.name));
       setRows(flat);
+      setTotalDeadlineCount(totalDeadlines);
       setCaseCount(activeCases);
       setActiveCasesForPicker(activeList);
     } catch (e) {
@@ -279,9 +283,10 @@ export default function DashboardPage() {
       </div>
 
       {/* Stats */}
-      <div className="mt-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="mt-8 grid grid-cols-2 gap-4 lg:grid-cols-5">
         <StatCard label="Active Cases" value={caseCount} />
-        <StatCard label="Total Deadlines" value={rows.length} />
+        <StatCard label="Deadlines (Next 90d)" value={rows.length} />
+        <StatCard label="Deadlines (Total)" value={totalDeadlineCount} />
         <StatCard label="Overdue" value={overdueCount} accent={overdueCount > 0 ? "text-danger" : undefined} />
         <StatCard label="This Week" value={thisWeekCount} accent={thisWeekCount > 0 ? "text-warning" : undefined} />
       </div>
