@@ -11,7 +11,7 @@ import {
   subscribeContacts,
   updateContact,
 } from "@/lib/supabase/repo";
-import type { Contact, ContactRole } from "@/lib/types";
+import type { Contact, ContactRole, TeamCalendarScope } from "@/lib/types";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { useHydrated } from "@/hooks/useHydrated";
 import {
@@ -44,6 +44,13 @@ const roleBadge: Record<ContactRole, "primary" | "success" | "pink" | "default">
   other: "default",
 };
 
+const calendarScopes: TeamCalendarScope[] = ["assigned_cases", "all_firm_events"];
+
+const calendarScopeLabel: Record<TeamCalendarScope, string> = {
+  assigned_cases: "Calendar: assigned cases only",
+  all_firm_events: "Calendar: all firm events",
+};
+
 export default function ContactsPage() {
   const router = useRouter();
   const hydrated = useHydrated();
@@ -52,6 +59,7 @@ export default function ContactsPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<ContactRole>("paralegal");
+  const [teamCalendarScope, setTeamCalendarScope] = useState<TeamCalendarScope>("assigned_cases");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -80,10 +88,11 @@ export default function ContactsPage() {
     setSaving(true);
     try {
       const supabase = getBrowserSupabase();
-      await addContact(supabase, user.id, { name, email, role });
+      await addContact(supabase, user.id, { name, email, role, teamCalendarScope });
       setName("");
       setEmail("");
       setRole("paralegal");
+      setTeamCalendarScope("assigned_cases");
     } catch (x) {
       setErr(x instanceof Error ? x.message : "Could not save contact");
     } finally {
@@ -94,6 +103,11 @@ export default function ContactsPage() {
   async function onRoleChange(c: Contact, r: ContactRole) {
     const supabase = getBrowserSupabase();
     await updateContact(supabase, c.id, { role: r });
+  }
+
+  async function onCalendarScopeChange(c: Contact, s: TeamCalendarScope) {
+    const supabase = getBrowserSupabase();
+    await updateContact(supabase, c.id, { teamCalendarScope: s });
   }
 
   async function onDelete(c: Contact) {
@@ -116,7 +130,7 @@ export default function ContactsPage() {
     <PageWrapper>
       <PageHeader
         title="Contacts"
-        subtitle="Attorneys, paralegals, and legal assistants invited to calendar events."
+        subtitle="Team members for case assignment and Google Calendar copies. “All firm events” is merged on every sync (deduped if they are already on the case)."
       />
 
       <Card className="mt-8">
@@ -126,7 +140,7 @@ export default function ContactsPage() {
         <CardBody>
           <form
             onSubmit={onAdd}
-            className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5"
+            className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6"
           >
             <div className="sm:col-span-1 lg:col-span-2">
               <Label required>Name</Label>
@@ -164,13 +178,27 @@ export default function ContactsPage() {
                 ))}
               </Select>
             </div>
-            <div className="flex items-end sm:col-span-2 lg:col-span-5">
+            <div className="sm:col-span-2 lg:col-span-2">
+              <Label>Calendar copies</Label>
+              <Select
+                className="mt-1.5"
+                value={teamCalendarScope}
+                onChange={(e) => setTeamCalendarScope(e.target.value as TeamCalendarScope)}
+              >
+                {calendarScopes.map((s) => (
+                  <option key={s} value={s}>
+                    {calendarScopeLabel[s]}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="flex items-end sm:col-span-2 lg:col-span-6">
               <Button type="submit" disabled={saving} size="md">
                 {saving ? "Saving…" : "Add Contact"}
               </Button>
             </div>
             {err && (
-              <div className="sm:col-span-2 lg:col-span-5">
+              <div className="sm:col-span-2 lg:col-span-6">
                 <div className="rounded-lg border border-danger/20 bg-danger-light px-4 py-2" role="alert">
                   <p className="text-sm text-danger">{err}</p>
                 </div>
@@ -202,9 +230,9 @@ export default function ContactsPage() {
                   </div>
                   <p className="truncate text-sm text-text-muted">{c.email}</p>
                 </div>
-                <div className="flex shrink-0 items-center gap-3">
+                <div className="flex shrink-0 flex-wrap items-center gap-3">
                   <Select
-                    className="w-auto text-xs"
+                    className="w-auto min-w-44 text-xs"
                     value={c.role}
                     onChange={(e) =>
                       void onRoleChange(c, e.target.value as ContactRole)
@@ -213,6 +241,20 @@ export default function ContactsPage() {
                     {roles.map((r) => (
                       <option key={r} value={r}>
                         {roleLabel[r]}
+                      </option>
+                    ))}
+                  </Select>
+                  <Select
+                    className="w-auto min-w-56 text-xs"
+                    title="Who receives Google Calendar copies of firm-synced events"
+                    value={c.teamCalendarScope}
+                    onChange={(e) =>
+                      void onCalendarScopeChange(c, e.target.value as TeamCalendarScope)
+                    }
+                  >
+                    {calendarScopes.map((s) => (
+                      <option key={s} value={s}>
+                        {calendarScopeLabel[s]}
                       </option>
                     ))}
                   </Select>

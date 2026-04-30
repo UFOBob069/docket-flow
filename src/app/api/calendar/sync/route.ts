@@ -9,6 +9,7 @@ import {
   reconcileCalendarEventTeam,
 } from "@/lib/google-calendar";
 import { buildSolMilestoneSpecs } from "@/lib/sol-milestones";
+import { fetchAllFirmEventsContactEmails, mergeAttendeeEmailLists } from "@/lib/calendar-global-recipients";
 import { getUserFromBearer } from "@/lib/supabase/auth-server";
 
 export const runtime = "nodejs";
@@ -139,6 +140,8 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     if (body.action === "reconcile_team") {
+      const firmWideEmails = await fetchAllFirmEventsContactEmails(req.headers.get("authorization"));
+      const attendeeEmails = mergeAttendeeEmailLists(body.attendeeEmails, firmWideEmails);
       const results: {
         organizerEventId: string;
         idsByEmail: Record<string, string>;
@@ -157,7 +160,7 @@ export async function POST(req: Request): Promise<Response> {
           startDateTime: ev.startDateTime,
           endDateTime: ev.endDateTime,
           location: ev.location,
-          attendeeEmails: body.attendeeEmails,
+          attendeeEmails,
           idsByEmail: ev.googleCalendarEventIdsByEmail,
           googleEventId: ev.googleEventId,
         });
@@ -206,6 +209,8 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     if (body.action === "create") {
+      const firmWideEmails = await fetchAllFirmEventsContactEmails(req.headers.get("authorization"));
+      const attendeeEmails = mergeAttendeeEmailLists(body.attendeeEmails, firmWideEmails);
       const googleEventIds: string[] = [];
       const googleEventIdMaps: Record<string, string>[] = [];
       console.log("[sync] Creating", body.events.length, "events");
@@ -220,7 +225,7 @@ export async function POST(req: Request): Promise<Response> {
           summary,
           description,
           dateIso: ev.date,
-          attendeeEmails: body.attendeeEmails,
+          attendeeEmails,
           reminderMinutes: ev.reminderMinutes ?? [20160, 10080, 1440],
           startDateTime: ev.startDateTime,
           endDateTime: ev.endDateTime,

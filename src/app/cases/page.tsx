@@ -43,6 +43,30 @@ function eventInDateRange(ev: CalendarEvent, start: string, end: string): boolea
   return ev.date >= start && ev.date <= end;
 }
 
+function caseNumberSortKey(c: Case): number | null {
+  const raw = (c.caseNumber ?? c.causeNumber ?? "").trim();
+  if (!raw) return null;
+  const digitsOnly = raw.replace(/\D+/g, "");
+  if (!digitsOnly) return null;
+  const n = Number.parseInt(digitsOnly, 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+function compareCasesByCaseNumber(a: Case, b: Case): number {
+  const aNum = caseNumberSortKey(a);
+  const bNum = caseNumberSortKey(b);
+  if (aNum !== null && bNum !== null && aNum !== bNum) return aNum - bNum;
+  if (aNum !== null && bNum === null) return -1;
+  if (aNum === null && bNum !== null) return 1;
+
+  const aRaw = (a.caseNumber ?? a.causeNumber ?? "").trim();
+  const bRaw = (b.caseNumber ?? b.causeNumber ?? "").trim();
+  const rawCmp = aRaw.localeCompare(bRaw, undefined, { numeric: true, sensitivity: "base" });
+  if (rawCmp !== 0) return rawCmp;
+
+  return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+}
+
 export default function CasesListPage() {
   const router = useRouter();
   const hydrated = useHydrated();
@@ -167,7 +191,7 @@ export default function CasesListPage() {
         return hay.includes(q);
       });
     }
-    return list;
+    return [...list].sort(compareCasesByCaseNumber);
   }, [
     cases,
     search,

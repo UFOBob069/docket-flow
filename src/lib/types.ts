@@ -90,6 +90,9 @@ export type EventKind =
 
 export type ContactRole = "attorney" | "paralegal" | "legal_assistant" | "other";
 
+/** Who gets Google calendar copies of firm-synced events for this contact. */
+export type TeamCalendarScope = "assigned_cases" | "all_firm_events";
+
 /** Where the event row came from; mirrors are not created/updated/deleted via Google Calendar API. */
 export type CalendarEventOrigin = "docketflow" | "google_ics_mirror";
 
@@ -99,6 +102,8 @@ export interface Contact {
   name: string;
   email: string;
   role: ContactRole;
+  /** Default: only when assigned on the case; `all_firm_events` merges into every team calendar sync. */
+  teamCalendarScope: TeamCalendarScope;
   createdAt: number;
   updatedAt: number;
 }

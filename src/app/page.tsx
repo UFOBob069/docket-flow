@@ -3,13 +3,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { differenceInCalendarDays, parseISO, format, formatDistanceToNow } from "date-fns";
+import { addDays, differenceInCalendarDays, parseISO, format, formatDistanceToNow } from "date-fns";
 import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
 import { fetchCasesWithEvents, subscribeActivity, subscribeContacts } from "@/lib/supabase/repo";
-import type { ActivityEntry, CalendarEvent, Case, Contact } from "@/lib/types";
+import { caseMatchesAssignedRole } from "@/lib/case-assigned-filter";
+import { EVENT_KIND_FILTER_OPTIONS } from "@/lib/one-off-events";
+import type { ActivityEntry, CalendarEvent, Case, Contact, EventKind } from "@/lib/types";
 import { AddCalendarEventModal } from "@/components/AddCalendarEventModal";
+import { FilterMultiSelect } from "@/components/FilterMultiSelect";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { useHydrated } from "@/hooks/useHydrated";
 import {
@@ -18,6 +21,8 @@ import {
   Card,
   CardBody,
   EmptyState,
+  Input,
+  Label,
   PageWrapper,
   Spinner,
 } from "@/components/ui";
@@ -26,6 +31,16 @@ type Row = { case: Case; event: CalendarEvent };
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+const DEFAULT_DASHBOARD_SPAN_DAYS = 90;
+
+function defaultDashboardEnd(startYmd: string): string {
+  return format(addDays(parseISO(startYmd), DEFAULT_DASHBOARD_SPAN_DAYS), "yyyy-MM-dd");
+}
+
+function formatRangePill(start: string, end: string): string {
+  return `${format(parseISO(start), "MMM d")} - ${format(parseISO(end), "MMM d")}`;
 }
 
 type Urgency = "overdue" | "today" | "week" | "fortnight" | "quarter";
@@ -168,6 +183,14 @@ export default function DashboardPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [showAddEvent, setShowAddEvent] = useState(false);
+  const [search, setSearch] = useState("");
+  const [attorneyFilterIds, setAttorneyFilterIds] = useState<string[]>([]);
+  const [paralegalFilterIds, setParalegalFilterIds] = useState<string[]>([]);
+  const [eventKindFilters, setEventKindFilters] = useState<EventKind[]>([]);
+  const [showFiltersDrawer, setShowFiltersDrawer] = useState(false);
+  const [showDateModal, setShowDateModal] = useState(false);
+  const [timelineStart, setTimelineStart] = useState(() => todayIso());
+  const [timelineEnd, setTimelineEnd] = useState(() => defaultDashboardEnd(todayIso()));
 
   const loadDashboard = useCallback(async () => {
     if (!user || !supabaseReady) return;
@@ -226,14 +249,92 @@ export default function DashboardPage() {
   }, [user, loading, supabaseReady]);
 
   const today = todayIso();
+  const contactById = useMemo(() => {
+    const m = new Map<string, Contact>();
+    for (const c of contacts) m.set(c.id, c);
+    return m;
+  }, [contacts]);
+
+  const attorneys = useMemo(() => contacts.filter((c) => c.role === "attorney"), [contacts]);
+  const paralegals = useMemo(() => contacts.filter((c) => c.role === "paralegal"), [contacts]);
+
+  const eventKindCheckboxOptions = useMemo(
+    () =>
+      EVENT_KIND_FILTER_OPTIONS.filter((o) => o.value !== "").map((o) => ({
+        id: o.value,
+        label: o.label,
+      })),
+    []
+  );
+
+  const attorneyOptions = useMemo(
+    () => attorneys.map((c) => ({ id: c.id, label: c.name })),
+    [attorneys]
+  );
+  const paralegalOptions = useMemo(
+    () => paralegals.map((c) => ({ id: c.id, label: c.name })),
+    [paralegals]
+  );
+
+  const filteredRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return rows.filter(({ case: c, event: e }) => {
+      if (!caseMatchesAssignedRole(c, attorneyFilterIds, "attorney", contactById)) return false;
+      if (!caseMatchesAssignedRole(c, paralegalFilterIds, "paralegal", contactById)) return false;
+      if (
+        eventKindFilters.length &&
+        !eventKindFilters.includes((e.eventKind ?? "other_event") as EventKind)
+      ) {
+        return false;
+      }
+      if (e.date < timelineStart || e.date > timelineEnd) return false;
+      if (!q) return true;
+      const hay = [e.title, e.description, c.name, c.clientName, e.deponentOrSubject ?? ""]
+        .join("\n")
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [
+    rows,
+    search,
+    attorneyFilterIds,
+    paralegalFilterIds,
+    eventKindFilters,
+    timelineStart,
+    timelineEnd,
+    contactById,
+  ]);
+
   const grouped = useMemo(() => {
     const buckets: Record<Urgency, Row[]> = { overdue: [], today: [], week: [], fortnight: [], quarter: [] };
-    for (const r of rows) {
+    for (const r of filteredRows) {
       const u = classify(r.event.date, today);
       if (u) buckets[u].push(r);
     }
     return buckets;
-  }, [rows, today]);
+  }, [filteredRows, today]);
+
+  const hasCustomDateRange =
+    timelineStart !== todayIso() || timelineEnd !== defaultDashboardEnd(todayIso());
+
+  const activeFilterCount =
+    (attorneyFilterIds.length ? 1 : 0) +
+    (paralegalFilterIds.length ? 1 : 0) +
+    (eventKindFilters.length ? 1 : 0) +
+    (hasCustomDateRange ? 1 : 0);
+
+  function resetTimelineToDefault() {
+    const s = todayIso();
+    setTimelineStart(s);
+    setTimelineEnd(defaultDashboardEnd(s));
+  }
+
+  function clearAllFilters() {
+    setAttorneyFilterIds([]);
+    setParalegalFilterIds([]);
+    setEventKindFilters([]);
+    resetTimelineToDefault();
+  }
 
   if (!hydrated) return <PageSkeleton />;
 
@@ -282,6 +383,81 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <Input
+          className="min-w-72 flex-1"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search title, case, client..."
+        />
+        <button
+          type="button"
+          onClick={() => setShowDateModal(true)}
+          className="rounded-xl border border-border bg-white px-3 py-2 text-sm font-medium shadow-sm transition hover:border-primary/40"
+        >
+          {formatRangePill(timelineStart, timelineEnd)}
+        </button>
+        <Button variant="secondary" onClick={() => setShowFiltersDrawer(true)}>
+          Filters{activeFilterCount ? ` (${activeFilterCount})` : ""}
+        </Button>
+      </div>
+
+      {Boolean(
+        attorneyFilterIds.length ||
+          paralegalFilterIds.length ||
+          eventKindFilters.length ||
+          hasCustomDateRange
+      ) && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {attorneyFilterIds.map((id) => (
+            <button
+              key={`att-${id}`}
+              type="button"
+              onClick={() => setAttorneyFilterIds((prev) => prev.filter((x) => x !== id))}
+              className="rounded-full bg-surface-alt px-2.5 py-1 text-xs text-text"
+            >
+              {(contactById.get(id)?.name ?? id)} ×
+            </button>
+          ))}
+          {paralegalFilterIds.map((id) => (
+            <button
+              key={`par-${id}`}
+              type="button"
+              onClick={() => setParalegalFilterIds((prev) => prev.filter((x) => x !== id))}
+              className="rounded-full bg-surface-alt px-2.5 py-1 text-xs text-text"
+            >
+              {(contactById.get(id)?.name ?? id)} ×
+            </button>
+          ))}
+          {eventKindFilters.map((kind) => (
+            <button
+              key={`kind-${kind}`}
+              type="button"
+              onClick={() => setEventKindFilters((prev) => prev.filter((x) => x !== kind))}
+              className="rounded-full bg-surface-alt px-2.5 py-1 text-xs text-text"
+            >
+              {(eventKindCheckboxOptions.find((o) => o.id === kind)?.label ?? kind)} ×
+            </button>
+          ))}
+          {hasCustomDateRange && (
+            <button
+              type="button"
+              onClick={resetTimelineToDefault}
+              className="rounded-full bg-surface-alt px-2.5 py-1 text-xs text-text"
+            >
+              {formatRangePill(timelineStart, timelineEnd)} ×
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={clearAllFilters}
+            className="text-xs font-medium text-primary hover:underline"
+          >
+            Clear all
+          </button>
+        </div>
+      )}
+
       {/* Stats */}
       <div className="mt-8 grid grid-cols-2 gap-4 lg:grid-cols-5">
         <StatCard label="Active Cases" value={caseCount} />
@@ -327,7 +503,7 @@ export default function DashboardPage() {
           <DeadlineSection rows={grouped.fortnight} urgency="fortnight" />
           <DeadlineSection rows={grouped.quarter} urgency="quarter" />
 
-          {!refreshing && rows.length === 0 && !loadError && (
+          {!refreshing && filteredRows.length === 0 && !loadError && (
             <EmptyState
               title="No upcoming deadlines"
               description="Create a case to extract and calendar deadlines from your scheduling orders."
@@ -344,6 +520,134 @@ export default function DashboardPage() {
         <div className="space-y-4">
           <ActivityFeed entries={activity} />
         </div>
+      </div>
+
+      {showDateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/25"
+            onClick={() => setShowDateModal(false)}
+            aria-label="Close date picker"
+          />
+          <Card className="relative z-10 w-[min(92vw,420px)] rounded-2xl shadow-2xl">
+            <CardBody className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-semibold text-text">Date range</h3>
+                <button
+                  type="button"
+                  className="text-xs font-medium text-primary hover:underline"
+                  onClick={resetTimelineToDefault}
+                >
+                  Reset
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>From</Label>
+                  <Input
+                    type="date"
+                    className="mt-1.5"
+                    value={timelineStart}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (!v) return;
+                      setTimelineStart(v);
+                      setTimelineEnd((end) => (end < v ? v : end));
+                    }}
+                  />
+                </div>
+                <div>
+                  <Label>To</Label>
+                  <Input
+                    type="date"
+                    className="mt-1.5"
+                    value={timelineEnd}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (!v) return;
+                      setTimelineEnd(v < timelineStart ? timelineStart : v);
+                    }}
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end">
+                <Button type="button" onClick={() => setShowDateModal(false)}>
+                  Apply
+                </Button>
+              </div>
+            </CardBody>
+          </Card>
+        </div>
+      )}
+
+      <div
+        className={`fixed inset-0 z-40 transition ${
+          showFiltersDrawer ? "pointer-events-auto" : "pointer-events-none"
+        }`}
+      >
+        <button
+          type="button"
+          className={`absolute inset-0 bg-black/20 transition-opacity ${
+            showFiltersDrawer ? "opacity-100" : "opacity-0"
+          }`}
+          onClick={() => setShowFiltersDrawer(false)}
+          aria-label="Close filters"
+        />
+        <aside
+          className={`absolute right-0 top-0 h-full w-[min(92vw,400px)] border-l border-border bg-white p-4 shadow-2xl transition-transform duration-300 ${
+            showFiltersDrawer ? "translate-x-0" : "translate-x-full"
+          }`}
+        >
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-lg font-semibold text-text">Filters</h3>
+            <button
+              type="button"
+              className="text-sm font-medium text-primary hover:underline"
+              onClick={clearAllFilters}
+            >
+              Clear all
+            </button>
+          </div>
+          <div className="space-y-4">
+            <FilterMultiSelect
+              label="Attorneys"
+              options={attorneyOptions}
+              selectedIds={attorneyFilterIds}
+              onChange={setAttorneyFilterIds}
+              placeholder="Select attorneys"
+            />
+            <FilterMultiSelect
+              label="Paralegals"
+              options={paralegalOptions}
+              selectedIds={paralegalFilterIds}
+              onChange={setParalegalFilterIds}
+              placeholder="Select paralegals"
+            />
+            <FilterMultiSelect
+              label="Event types"
+              options={eventKindCheckboxOptions}
+              selectedIds={eventKindFilters}
+              onChange={(ids) => setEventKindFilters(ids as EventKind[])}
+              placeholder="Select event types"
+            />
+            <div>
+              <Label>Date range</Label>
+              <button
+                type="button"
+                onClick={() => setShowDateModal(true)}
+                className="mt-1.5 w-full rounded-xl border border-border bg-white px-3 py-2 text-left text-sm shadow-sm transition hover:border-primary/40"
+              >
+                {formatRangePill(timelineStart, timelineEnd)}
+              </button>
+            </div>
+            <div className="pt-2">
+              <Button type="button" className="w-full" onClick={() => setShowFiltersDrawer(false)}>
+                Done
+              </Button>
+            </div>
+          </div>
+        </aside>
       </div>
 
       {user && (

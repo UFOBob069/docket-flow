@@ -77,12 +77,16 @@ function eventFromRow(r: Record<string, unknown>): CalendarEvent {
 }
 
 function contactFromRow(r: Record<string, unknown>): Contact {
+  const scope = r.team_calendar_scope as string | undefined;
+  const teamCalendarScope: Contact["teamCalendarScope"] =
+    scope === "all_firm_events" ? "all_firm_events" : "assigned_cases";
   return {
     id: r.id as string,
     ownerId: r.user_id as string,
     name: r.name as string,
     email: r.email as string,
     role: r.role as Contact["role"],
+    teamCalendarScope,
     createdAt: Number(r.created_at),
     updatedAt: Number(r.updated_at),
   };
@@ -523,6 +527,7 @@ export async function addContact(
     name: input.name.trim(),
     email: input.email.trim(),
     role: input.role,
+    team_calendar_scope: input.teamCalendarScope ?? "assigned_cases",
     created_at: now,
     updated_at: now,
   });
@@ -540,6 +545,8 @@ export async function updateContact(
   if (patch.name !== undefined) row.name = patch.name;
   if (patch.email !== undefined) row.email = patch.email;
   if (patch.role !== undefined) row.role = patch.role;
+  if (patch.teamCalendarScope !== undefined)
+    row.team_calendar_scope = patch.teamCalendarScope;
   const { error } = await supabase.from("contacts").update(row).eq("id", contactId);
   if (error) throw error;
 }
