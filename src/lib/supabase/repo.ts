@@ -230,6 +230,36 @@ export function subscribeCases(
   };
 }
 
+/**
+ * Fire when any firm-visible case_events row changes (insert/update/delete).
+ * Use with `fetchCasesWithEvents` so list UIs stay in sync — `subscribeCases` alone
+ * only reacts to the `cases` table, so SOL milestones and other event writes were
+ * invisible until a full navigation or case row update.
+ */
+export function subscribeCaseEventsFirm(
+  supabase: SupabaseClient,
+  _userId: string,
+  onChange: () => void
+): Unsubscribe {
+  const lane =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `r${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const ch = supabase
+    .channel(`case_events:firm:${lane}`)
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "case_events" },
+      () => {
+        onChange();
+      }
+    )
+    .subscribe();
+  return () => {
+    void supabase.removeChannel(ch);
+  };
+}
+
 /** Max case IDs per `in(...)` query — avoids huge URLs and keeps PostgREST happy. */
 const CASE_IDS_IN_CHUNK = 150;
 

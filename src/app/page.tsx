@@ -7,7 +7,12 @@ import { addDays, differenceInCalendarDays, parseISO, format, formatDistanceToNo
 import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
-import { fetchCasesWithEvents, subscribeActivity, subscribeContacts } from "@/lib/supabase/repo";
+import {
+  fetchCasesWithEvents,
+  subscribeActivity,
+  subscribeCaseEventsFirm,
+  subscribeContacts,
+} from "@/lib/supabase/repo";
 import { caseMatchesAssignedRole } from "@/lib/case-assigned-filter";
 import { EVENT_KIND_FILTER_OPTIONS } from "@/lib/one-off-events";
 import type { ActivityEntry, CalendarEvent, Case, Contact, EventKind } from "@/lib/types";
@@ -241,6 +246,14 @@ export default function DashboardPage() {
     const supabase = getBrowserSupabase();
     return subscribeContacts(supabase, user.id, setContacts);
   }, [user, loading, supabaseReady]);
+
+  useEffect(() => {
+    if (!supabaseReady || loading || !user) return;
+    const supabase = getBrowserSupabase();
+    return subscribeCaseEventsFirm(supabase, user.id, () => {
+      void loadDashboard();
+    });
+  }, [user, loading, supabaseReady, loadDashboard]);
 
   useEffect(() => {
     if (!supabaseReady || loading || !user) return;

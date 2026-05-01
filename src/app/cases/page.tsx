@@ -8,7 +8,12 @@ import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
 import { caseMatchesAssignedRole } from "@/lib/case-assigned-filter";
-import { fetchCasesWithEvents, subscribeCases, subscribeContacts } from "@/lib/supabase/repo";
+import {
+  fetchCasesWithEvents,
+  subscribeCaseEventsFirm,
+  subscribeCases,
+  subscribeContacts,
+} from "@/lib/supabase/repo";
 import { EVENT_KIND_FILTER_OPTIONS } from "@/lib/one-off-events";
 import type { CalendarEvent, Case, Contact, EventKind } from "@/lib/types";
 import { FilterMultiSelect } from "@/components/FilterMultiSelect";
@@ -102,9 +107,11 @@ export default function CasesListPage() {
     };
     loadBundled();
     const unsubCases = subscribeCases(supabase, user.id, loadBundled);
+    const unsubEvents = subscribeCaseEventsFirm(supabase, user.id, loadBundled);
     const unsubContacts = subscribeContacts(supabase, user.id, setContacts);
     return () => {
       unsubCases();
+      unsubEvents();
       unsubContacts();
     };
   }, [user, loading, supabaseReady]);
