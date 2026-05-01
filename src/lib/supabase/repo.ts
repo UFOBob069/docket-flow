@@ -196,21 +196,19 @@ export async function fetchCasesForUser(
   return (data ?? []).map((r) => caseFromRow(r as Record<string, unknown>));
 }
 
+/** `cases` table changes — caller refetches bundled data (e.g. `fetchCasesWithEvents`). */
 export function subscribeCases(
   supabase: SupabaseClient,
   _userId: string,
-  cb: (cases: Case[]) => void
+  onChange: () => void
 ): Unsubscribe {
-  const load = async () => {
+  const notify = () => {
     try {
-      const list = await fetchCasesForUser(supabase, _userId);
-      cb(list);
+      onChange();
     } catch (e) {
       console.warn("[subscribeCases]", e);
-      cb([]);
     }
   };
-  void load();
   const lane =
     typeof crypto !== "undefined" && "randomUUID" in crypto
       ? crypto.randomUUID()
@@ -221,7 +219,7 @@ export function subscribeCases(
       "postgres_changes",
       { event: "*", schema: "public", table: "cases" },
       () => {
-        void load();
+        notify();
       }
     )
     .subscribe();
@@ -263,6 +261,37 @@ export function subscribeCaseEventsFirm(
 /** Max case IDs per `in(...)` query — avoids huge URLs and keeps PostgREST happy. */
 const CASE_IDS_IN_CHUNK = 150;
 
+/**
+ * PostgREST/Supabase caps each response (often 1000 rows). Without paging, a firm-wide
+ * `case_events` query ordered by date returns only the earliest slice — newer rows
+ * (e.g. SOL milestones on active cases) never appear, so case lists show "0 events".
+ */
+const POSTGREST_PAGE_SIZE = 1000;
+
+async function fetchAllCaseEventRowsForCaseIds(
+  supabase: SupabaseClient,
+  caseIds: string[]
+): Promise<Record<string, unknown>[]> {
+  if (!caseIds.length) return [];
+  const acc: Record<string, unknown>[] = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from("case_events")
+      .select("*")
+      .in("case_id", caseIds)
+      .order("date", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + POSTGREST_PAGE_SIZE - 1);
+    if (error) throw error;
+    const page = (data ?? []) as Record<string, unknown>[];
+    for (const r of page) acc.push(r);
+    if (page.length < POSTGREST_PAGE_SIZE) break;
+    from += POSTGREST_PAGE_SIZE;
+  }
+  return acc;
+}
+
 export async function fetchCasesWithEvents(
   supabase: SupabaseClient,
   userId: string
@@ -276,14 +305,9 @@ export async function fetchCasesWithEvents(
   const caseIds = cases.map((c) => c.id);
   for (let i = 0; i < caseIds.length; i += CASE_IDS_IN_CHUNK) {
     const chunk = caseIds.slice(i, i + CASE_IDS_IN_CHUNK);
-    const { data, error } = await supabase
-      .from("case_events")
-      .select("*")
-      .in("case_id", chunk)
-      .order("date", { ascending: true });
-    if (error) throw error;
-    for (const r of data ?? []) {
-      const ev = eventFromRow(r as Record<string, unknown>);
+    const rows = await fetchAllCaseEventRowsForCaseIds(supabase, chunk);
+    for (const r of rows) {
+      const ev = eventFromRow(r);
       const list = eventsByCaseId.get(ev.caseId);
       if (list) list.push(ev);
     }
@@ -300,13 +324,23 @@ export async function fetchEventsForCase(
   supabase: SupabaseClient,
   caseId: string
 ): Promise<CalendarEvent[]> {
-  const { data, error } = await supabase
-    .from("case_events")
-    .select("*")
-    .eq("case_id", caseId)
-    .order("date", { ascending: true });
-  if (error) throw error;
-  return (data ?? []).map((r) => eventFromRow(r as Record<string, unknown>));
+  const acc: CalendarEvent[] = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from("case_events")
+      .select("*")
+      .eq("case_id", caseId)
+      .order("date", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + POSTGREST_PAGE_SIZE - 1);
+    if (error) throw error;
+    const page = data ?? [];
+    for (const r of page) acc.push(eventFromRow(r as Record<string, unknown>));
+    if (page.length < POSTGREST_PAGE_SIZE) break;
+    from += POSTGREST_PAGE_SIZE;
+  }
+  return acc;
 }
 
 /** Case fields joined for firm-wide calendar views */
@@ -335,20 +369,30 @@ export async function fetchEventsInDateRange(
   startDate: string,
   endDate: string
 ): Promise<EventWithCaseRow[]> {
-  const { data, error } = await supabase
-    .from("case_events")
-    .select("*, cases (id, name, client_name, assigned_contact_ids, status)")
-    .gte("date", startDate)
-    .lte("date", endDate)
-    .order("date", { ascending: true });
-  if (error) throw error;
-  return (data ?? []).flatMap((raw) => {
-    const row = raw as Record<string, unknown>;
-    const nested = row.cases as Record<string, unknown> | Record<string, unknown>[] | null | undefined;
-    const cRow = Array.isArray(nested) ? nested[0] : nested;
-    if (!cRow) return [];
-    return [{ event: eventFromRow(row), case: caseCalendarMetaFromRow(cRow) }];
-  });
+  const acc: EventWithCaseRow[] = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from("case_events")
+      .select("*, cases (id, name, client_name, assigned_contact_ids, status)")
+      .gte("date", startDate)
+      .lte("date", endDate)
+      .order("date", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + POSTGREST_PAGE_SIZE - 1);
+    if (error) throw error;
+    const page = data ?? [];
+    for (const raw of page) {
+      const row = raw as Record<string, unknown>;
+      const nested = row.cases as Record<string, unknown> | Record<string, unknown>[] | null | undefined;
+      const cRow = Array.isArray(nested) ? nested[0] : nested;
+      if (!cRow) continue;
+      acc.push({ event: eventFromRow(row), case: caseCalendarMetaFromRow(cRow) });
+    }
+    if (page.length < POSTGREST_PAGE_SIZE) break;
+    from += POSTGREST_PAGE_SIZE;
+  }
+  return acc;
 }
 
 export function subscribeEvents(

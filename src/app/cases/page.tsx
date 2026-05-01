@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { addDays, format, parseISO } from "date-fns";
@@ -96,15 +96,22 @@ export default function CasesListPage() {
     return m;
   }, [bundled]);
 
+  const loadBundled = useCallback(() => {
+    if (!user?.id) return;
+    void (async () => {
+      try {
+        const supabase = getBrowserSupabase();
+        const rows = await fetchCasesWithEvents(supabase, user.id);
+        setBundled(rows);
+      } catch (e) {
+        console.warn("[cases] fetchCasesWithEvents", e);
+      }
+    })();
+  }, [user?.id]);
+
   useEffect(() => {
     if (!supabaseReady || loading || !user) return;
     const supabase = getBrowserSupabase();
-    const loadBundled = () => {
-      void (async () => {
-        const rows = await fetchCasesWithEvents(supabase, user.id);
-        setBundled(rows);
-      })();
-    };
     loadBundled();
     const unsubCases = subscribeCases(supabase, user.id, loadBundled);
     const unsubEvents = subscribeCaseEventsFirm(supabase, user.id, loadBundled);
@@ -114,7 +121,17 @@ export default function CasesListPage() {
       unsubEvents();
       unsubContacts();
     };
-  }, [user, loading, supabaseReady]);
+  }, [user, loading, supabaseReady, loadBundled]);
+
+  /** Refetch when returning to the tab (Realtime may be off or delayed). */
+  useEffect(() => {
+    if (!supabaseReady || loading || !user) return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") loadBundled();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [supabaseReady, loading, user, loadBundled]);
 
   useEffect(() => {
     if (!loading && supabaseReady && !user) router.replace("/login");

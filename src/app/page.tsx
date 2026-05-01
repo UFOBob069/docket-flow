@@ -257,6 +257,15 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!supabaseReady || loading || !user) return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void loadDashboard();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [supabaseReady, loading, user, loadDashboard]);
+
+  useEffect(() => {
+    if (!supabaseReady || loading || !user) return;
     const supabase = getBrowserSupabase();
     return subscribeActivity(supabase, user.id, 20, setActivity);
   }, [user, loading, supabaseReady]);
