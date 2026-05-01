@@ -26,6 +26,7 @@ type CreateBody = {
     startDateTime?: string;
     endDateTime?: string;
     location?: string;
+    scheduleKind?: "deadline" | "meeting";
   }[];
   attendeeEmails: string[];
 };
@@ -44,6 +45,7 @@ type PatchBody = {
   startDateTime?: string;
   endDateTime?: string;
   location?: string | null;
+  scheduleKind?: "deadline" | "meeting";
 };
 
 type DeleteBody = {
@@ -51,6 +53,7 @@ type DeleteBody = {
   googleEventId: string;
   googleCalendarEventIdsByEmail?: Record<string, string>;
   googleHostCalendarId?: string;
+  scheduleKind?: "deadline" | "meeting";
 };
 
 type CreateSolMilestonesBody = {
@@ -78,6 +81,7 @@ type ReconcileBody = {
     location?: string | null;
     googleEventId?: string;
     googleCalendarEventIdsByEmail?: Record<string, string>;
+    scheduleKind?: "deadline" | "meeting";
   }[];
 };
 
@@ -99,10 +103,9 @@ export async function POST(req: Request): Promise<Response> {
       if (body.googleHostCalendarId) {
         await deleteSolMilestoneGoogleEvent(body.googleEventId, body.googleHostCalendarId);
       } else {
-        await deleteGoogleEvent(
-          body.googleEventId,
-          body.googleCalendarEventIdsByEmail
-        );
+        await deleteGoogleEvent(body.googleEventId, body.googleCalendarEventIdsByEmail, {
+          scheduleKind: body.scheduleKind,
+        });
       }
       return NextResponse.json({ ok: true });
     }
@@ -134,6 +137,7 @@ export async function POST(req: Request): Promise<Response> {
           endDateTime: body.endDateTime,
           reminderMinutes: body.reminderMinutes ?? [20160, 10080, 1440],
           location: body.location,
+          scheduleKind: body.scheduleKind,
         });
       }
       return NextResponse.json({ ok: true });
@@ -163,6 +167,7 @@ export async function POST(req: Request): Promise<Response> {
           attendeeEmails,
           idsByEmail: ev.googleCalendarEventIdsByEmail,
           googleEventId: ev.googleEventId,
+          scheduleKind: ev.scheduleKind,
         });
         results.push({
           organizerEventId: r.organizerEventId,
@@ -230,6 +235,7 @@ export async function POST(req: Request): Promise<Response> {
           startDateTime: ev.startDateTime,
           endDateTime: ev.endDateTime,
           location: ev.location,
+          scheduleKind: ev.scheduleKind ?? "deadline",
         });
         googleEventIds.push(organizerEventId);
         googleEventIdMaps.push(idsByEmail);

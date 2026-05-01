@@ -26,6 +26,18 @@ function getDefaultUser(): string {
   return email;
 }
 
+/**
+ * User whose primary calendar hosts meeting invites and appears as organizer.
+ * Defaults to reminder sender, then the main calendar impersonation user.
+ */
+export function getMeetingOrganizerEmail(): string {
+  const explicit = process.env.GOOGLE_MEETING_ORGANIZER_EMAIL?.trim();
+  if (explicit) return explicit;
+  const reminder = process.env.GOOGLE_REMINDER_EMAIL?.trim();
+  if (reminder) return reminder;
+  return getDefaultUser();
+}
+
 function buildOverrides(minutes: number[]) {
   return minutes
     .filter((m) => m >= 0 && m <= MAX_REMINDER_MIN)
@@ -87,14 +99,24 @@ function buildInsertRequestBody(params: EventPayload): Record<string, unknown> {
 async function insertCalendarEventOnCalendar(
   userEmail: string,
   calendarId: string,
-  params: EventPayload
+  params: EventPayload,
+  opts?: { sendUpdates?: "all" | "externalOnly" | "none"; attendeeEmails?: string[] }
 ): Promise<string> {
   const auth = getAuthForUser(userEmail);
   const calendar = google.calendar({ version: "v3", auth });
-  const requestBody = buildInsertRequestBody(params);
+  const requestBody: Record<string, unknown> = {
+    ...buildInsertRequestBody(params),
+  };
+  if (opts?.attendeeEmails?.length) {
+    requestBody.attendees = opts.attendeeEmails.map((email) => ({ email }));
+    requestBody.guestsCanModify = false;
+    requestBody.guestsCanInviteOthers = false;
+    requestBody.guestsCanSeeOtherGuests = true;
+  }
   const res = await calendar.events.insert({
     calendarId,
-    requestBody: requestBody as Record<string, unknown>,
+    ...(opts?.sendUpdates ? { sendUpdates: opts.sendUpdates } : {}),
+    requestBody,
   });
   return res.data.id ?? "";
 }
@@ -108,19 +130,25 @@ async function insertCalendarEventForUser(
 
 async function deleteCalendarEventForUser(
   userEmail: string,
-  eventId: string
+  eventId: string,
+  sendUpdates?: "all" | "externalOnly" | "none"
 ): Promise<void> {
-  await deleteCalendarEventOnCalendar(userEmail, "primary", eventId);
+  await deleteCalendarEventOnCalendar(userEmail, "primary", eventId, sendUpdates);
 }
 
 async function deleteCalendarEventOnCalendar(
   userEmail: string,
   calendarId: string,
-  eventId: string
+  eventId: string,
+  sendUpdates?: "all" | "externalOnly" | "none"
 ): Promise<void> {
   const auth = getAuthForUser(userEmail);
   const calendar = google.calendar({ version: "v3", auth });
-  await calendar.events.delete({ calendarId, eventId });
+  await calendar.events.delete({
+    calendarId,
+    eventId,
+    ...(sendUpdates ? { sendUpdates } : {}),
+  });
 }
 
 function buildPatchBody(params: {
@@ -164,7 +192,8 @@ async function patchCalendarEventOnCalendar(
   userEmail: string,
   calendarId: string,
   eventId: string,
-  patchBody: Record<string, unknown>
+  patchBody: Record<string, unknown>,
+  sendUpdates?: "all" | "externalOnly" | "none"
 ): Promise<void> {
   if (Object.keys(patchBody).length === 0) return;
   const auth = getAuthForUser(userEmail);
@@ -172,6 +201,7 @@ async function patchCalendarEventOnCalendar(
   await calendar.events.patch({
     calendarId,
     eventId,
+    ...(sendUpdates ? { sendUpdates } : {}),
     requestBody: patchBody,
   });
 }
@@ -179,14 +209,15 @@ async function patchCalendarEventOnCalendar(
 async function patchCalendarEventForUser(
   userEmail: string,
   eventId: string,
-  patchBody: Record<string, unknown>
+  patchBody: Record<string, unknown>,
+  sendUpdates?: "all" | "externalOnly" | "none"
 ): Promise<void> {
-  await patchCalendarEventOnCalendar(userEmail, "primary", eventId, patchBody);
+  await patchCalendarEventOnCalendar(userEmail, "primary", eventId, patchBody, sendUpdates);
 }
 
 /**
- * Create the event on EACH attendee's primary calendar (via DWD impersonation).
- * Returns organizer's id (for backward compat) and every copy keyed by lowercased email.
+ * Deadlines: create the same event on EACH recipient's primary calendar (DWD).
+ * Meetings: one timed event on the meeting organizer's calendar with Google attendees + invite emails (`sendUpdates: all`).
  */
 export async function insertGoogleEvent(params: {
   summary: string;
@@ -197,8 +228,8 @@ export async function insertGoogleEvent(params: {
   startDateTime?: string | null;
   endDateTime?: string | null;
   location?: string | null;
+  scheduleKind?: "deadline" | "meeting";
 }): Promise<{ organizerEventId: string; idsByEmail: Record<string, string> }> {
-  const defaultUser = getDefaultUser();
   const payload: EventPayload = {
     summary: params.summary,
     description: params.description,
@@ -209,6 +240,25 @@ export async function insertGoogleEvent(params: {
     location: params.location?.trim() || undefined,
   };
 
+  if (params.scheduleKind === "meeting") {
+    if (!params.startDateTime) {
+      throw new Error("Meeting events need a start time to send Google Calendar invites");
+    }
+    const organizer = getMeetingOrganizerEmail();
+    const orgLower = organizer.toLowerCase();
+    const guestEmails = Array.from(
+      new Set(params.attendeeEmails.map((e) => e.toLowerCase()).filter((e) => e !== orgLower))
+    );
+    console.log("[calendar] Creating meeting invite as", organizer, "guests:", guestEmails.length);
+    const id = await insertCalendarEventOnCalendar(organizer, "primary", payload, {
+      sendUpdates: "all",
+      attendeeEmails: guestEmails,
+    });
+    if (!id) throw new Error("Failed to create meeting on organizer calendar");
+    return { organizerEventId: id, idsByEmail: { [orgLower]: id } };
+  }
+
+  const defaultUser = getDefaultUser();
   const allRecipients = Array.from(
     new Set([defaultUser, ...params.attendeeEmails].map((e) => e.toLowerCase()))
   );
@@ -247,9 +297,24 @@ export async function patchGoogleEvent(params: {
   endDateTime?: string;
   reminderMinutes?: number[];
   location?: string | null;
+  scheduleKind?: "deadline" | "meeting";
 }): Promise<void> {
   const patchBody = buildPatchBody(params);
   if (Object.keys(patchBody).length === 0) return;
+
+  if (params.scheduleKind === "meeting") {
+    const organizer = getMeetingOrganizerEmail();
+    const orgLower = organizer.toLowerCase();
+    const eventId =
+      params.idsByEmail?.[orgLower] ?? params.googleEventId ?? Object.values(params.idsByEmail ?? {})[0];
+    if (!eventId) return;
+    try {
+      await patchCalendarEventForUser(organizer, eventId, patchBody, "all");
+    } catch (err) {
+      console.warn("[calendar] Patch failed for meeting", err);
+    }
+    return;
+  }
 
   const defaultUser = getDefaultUser();
   const entries: [string, string][] =
@@ -271,8 +336,23 @@ export async function patchGoogleEvent(params: {
 /** Delete one calendar row (legacy) or every stored copy for the team */
 export async function deleteGoogleEvent(
   googleEventId: string,
-  idsByEmail?: Record<string, string>
+  idsByEmail?: Record<string, string>,
+  opts?: { scheduleKind?: "deadline" | "meeting" }
 ): Promise<void> {
+  if (opts?.scheduleKind === "meeting") {
+    const organizer = getMeetingOrganizerEmail();
+    const orgLower = organizer.toLowerCase();
+    const eventId = idsByEmail?.[orgLower] ?? googleEventId;
+    if (eventId) {
+      try {
+        await deleteCalendarEventForUser(organizer, eventId, "all");
+      } catch (err) {
+        console.warn("[calendar] Delete failed for meeting", err);
+      }
+    }
+    return;
+  }
+
   if (idsByEmail && Object.keys(idsByEmail).length > 0) {
     for (const [email, eventId] of Object.entries(idsByEmail)) {
       try {
@@ -303,9 +383,48 @@ export async function reconcileCalendarEventTeam(params: {
   idsByEmail?: Record<string, string>;
   /** Legacy single id on organizer calendar only */
   googleEventId?: string;
+  scheduleKind?: "deadline" | "meeting";
 }): Promise<{ idsByEmail: Record<string, string>; organizerEventId: string }> {
   const defaultUser = getDefaultUser();
   const defaultLower = defaultUser.toLowerCase();
+  const meetingOrgLower = getMeetingOrganizerEmail().toLowerCase();
+
+  if (params.scheduleKind === "meeting") {
+    const oldMeetingMap: Record<string, string> = {};
+    if (params.idsByEmail) {
+      for (const [k, v] of Object.entries(params.idsByEmail)) {
+        oldMeetingMap[k.toLowerCase()] = v;
+      }
+    }
+    const legacyMultiCopy = Object.keys(oldMeetingMap).length > 1;
+    const meetingEventId =
+      oldMeetingMap[meetingOrgLower] ??
+      params.googleEventId ??
+      (Object.keys(oldMeetingMap).length === 1 ? Object.values(oldMeetingMap)[0] : undefined);
+
+    if (!legacyMultiCopy && meetingEventId) {
+      const guestEmails = Array.from(
+        new Set(
+          params.attendeeEmails.map((e) => e.toLowerCase()).filter((e) => e !== meetingOrgLower)
+        )
+      );
+      const organizer = getMeetingOrganizerEmail();
+      const auth = getAuthForUser(organizer);
+      const calendar = google.calendar({ version: "v3", auth });
+      await calendar.events.patch({
+        calendarId: "primary",
+        eventId: meetingEventId,
+        sendUpdates: "all",
+        requestBody: {
+          attendees: guestEmails.map((email) => ({ email })),
+        },
+      });
+      return {
+        organizerEventId: meetingEventId,
+        idsByEmail: { [meetingOrgLower]: meetingEventId },
+      };
+    }
+  }
 
   const newRecipients = Array.from(
     new Set([defaultLower, ...params.attendeeEmails.map((e) => e.toLowerCase())])

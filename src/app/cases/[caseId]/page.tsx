@@ -31,7 +31,15 @@ import {
   subscribeEvents,
   updateCase,
 } from "@/lib/supabase/repo";
-import type { CalendarEvent, Case, CaseStatus, Contact, EventCategory, EventKind } from "@/lib/types";
+import type {
+  CalendarEvent,
+  Case,
+  CaseStatus,
+  Contact,
+  EventCategory,
+  EventKind,
+  EventScheduleKind,
+} from "@/lib/types";
 import { AddCalendarEventModal } from "@/components/AddCalendarEventModal";
 import { FixedRemindersReadout } from "@/components/FixedRemindersReadout";
 import { MonthlyEventCalendar } from "@/components/MonthlyEventCalendar";
@@ -79,8 +87,13 @@ function calendarDeletePayload(ev: CalendarEvent): {
   googleEventId: string;
   googleHostCalendarId?: string;
   googleCalendarEventIdsByEmail?: Record<string, string>;
+  scheduleKind?: "deadline" | "meeting";
 } {
-  const base = { action: "delete" as const, googleEventId: ev.googleEventId! };
+  const base = {
+    action: "delete" as const,
+    googleEventId: ev.googleEventId!,
+    ...(ev.scheduleKind === "meeting" ? { scheduleKind: "meeting" as const } : {}),
+  };
   if (ev.googleHostCalendarId) {
     return { ...base, googleHostCalendarId: ev.googleHostCalendarId };
   }
@@ -482,6 +495,11 @@ export default function CaseDetailPage() {
           return;
         }
       }
+      if (updated.scheduleKind === "meeting" && !pickStartTime) {
+        setMsg("Meetings need a start time on the event date.");
+        setBusy(false);
+        return;
+      }
       const ek = updated.eventKind ?? "other_event";
       if (isTaxonomyEventKind(ek)) {
         updated = { ...updated, remindersMinutes: [...getFixedRemindersForKind(ek)] };
@@ -503,6 +521,7 @@ export default function CaseDetailPage() {
           description: googleCalendarDescription(updated),
           reminderMinutes: updated.remindersMinutes,
           location: updated.zoomLink?.trim() ?? "",
+          scheduleKind: updated.scheduleKind,
           ...(updated.startDateTime ? { startDateTime: updated.startDateTime } : {}),
           ...(updated.endDateTime ? { endDateTime: updated.endDateTime } : {}),
         }, idToken);
@@ -576,6 +595,7 @@ export default function CaseDetailPage() {
           description: googleCalendarDescription(ev),
           reminderMinutes: ev.remindersMinutes,
           location: ev.zoomLink?.trim() ?? "",
+          scheduleKind: ev.scheduleKind,
           ...(ev.startDateTime ? { startDateTime: ev.startDateTime } : {}),
           ...(ev.endDateTime ? { endDateTime: ev.endDateTime } : {}),
         }, idToken);
@@ -633,6 +653,7 @@ export default function CaseDetailPage() {
               description: googleCalendarDescription(ev),
               reminderMinutes: ev.remindersMinutes,
               location: ev.zoomLink?.trim() ?? "",
+              scheduleKind: ev.scheduleKind,
               ...(ev.startDateTime ? { startDateTime: ev.startDateTime } : {}),
               ...(ev.endDateTime ? { endDateTime: ev.endDateTime } : {}),
               googleEventId: ev.googleEventId,
@@ -1036,6 +1057,11 @@ export default function CaseDetailPage() {
                         </Badge>
                       )}
                       <Badge variant={catBadge[ev.category]}>{ev.category}</Badge>
+                      {ev.scheduleKind === "meeting" ? (
+                        <Badge variant="primary">📅 Meeting</Badge>
+                      ) : (
+                        <Badge variant="warning">⏰ Deadline</Badge>
+                      )}
                       {isGoogleIcsMirrorEvent(ev) ? (
                         <Badge variant="default">Originally from Google</Badge>
                       ) : (
@@ -1160,6 +1186,25 @@ export default function CaseDetailPage() {
                     </optgroup>
                   ))}
                 </Select>
+              </div>
+              <div>
+                <Label>Deadline vs meeting</Label>
+                <Select
+                  className="mt-1.5"
+                  value={editing.scheduleKind ?? "deadline"}
+                  onChange={(e) =>
+                    setEditing({
+                      ...editing,
+                      scheduleKind: e.target.value as EventScheduleKind,
+                    })
+                  }
+                >
+                  <option value="deadline">⏰ Deadline (all-day friendly)</option>
+                  <option value="meeting">📅 Meeting (time-based)</option>
+                </Select>
+                <p className="mt-1 text-xs text-text-dim">
+                  Meetings should have a start time below. Deadlines are usually all-day unless you set times.
+                </p>
               </div>
               <div>
                 <Label>Category</Label>

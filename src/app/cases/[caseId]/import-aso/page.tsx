@@ -255,6 +255,7 @@ export default function ImportAsoPage() {
             date: b.date,
             description: b.description,
             reminderMinutes: b.reminderMinutes,
+            ...(b.scheduleKind ? { scheduleKind: b.scheduleKind } : {}),
             ...(b.startDateTime ? { startDateTime: b.startDateTime } : {}),
             ...(b.endDateTime ? { endDateTime: b.endDateTime } : {}),
             ...(b.location ? { location: b.location } : {}),

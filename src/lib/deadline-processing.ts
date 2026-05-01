@@ -107,6 +107,7 @@ export function extractedToCalendarEvents(
       calendarOrigin: "docketflow" as const,
       title: row.title?.trim() || "Deadline",
       date: row.date,
+      scheduleKind: "deadline" as const,
       description: row.description?.trim() ?? "",
       eventKind,
       category,

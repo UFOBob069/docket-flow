@@ -63,6 +63,10 @@ export async function GET(req: Request): Promise<Response> {
       if (evErr) throw evErr;
 
       for (const ev of events ?? []) {
+        if ((ev.schedule_kind as string | undefined) === "meeting") {
+          skipped++;
+          continue;
+        }
         const eventDate = ev.date as string;
         const remindersMinutes = (ev.reminders_minutes as number[]) ?? [];
         const alreadySent = (ev.email_reminders_sent as number[]) ?? [];

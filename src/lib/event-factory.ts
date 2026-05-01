@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
-import type { CalendarEvent, EventCategory, EventKind } from "./types";
+import type { CalendarEvent, EventCategory, EventKind, EventScheduleKind } from "./types";
 import { DEFAULT_REMINDERS } from "./reminder-presets";
 import { categoryForManualEventKind } from "./one-off-events";
 import { localDateTimePartsToIso } from "./five-minute-datetime";
@@ -18,6 +18,7 @@ export function baseEvent(
     caseId,
     ownerId,
     calendarOrigin: "docketflow",
+    scheduleKind: "deadline",
     description: "",
     category: "other",
     eventKind: "other_event",
@@ -93,6 +94,7 @@ export function createTimedOneOffEvent(
     description: opts.description.trim(),
     category,
     eventKind: opts.eventKind,
+    scheduleKind: "meeting",
     startDateTime: opts.startDateTime,
     endDateTime: opts.endDateTime,
     deponentOrSubject: opts.deponentOrSubject?.trim() || null,
@@ -118,14 +120,17 @@ export function createAdHocCalendarEvent(
     externalAttendeesText?: string | null;
     zoomLink?: string | null;
     remindersMinutes: number[];
+    scheduleKind?: EventScheduleKind;
   }
 ): CalendarEvent {
   const category = opts.category ?? categoryForManualEventKind(opts.eventKind);
+  const scheduleKind = opts.scheduleKind ?? "deadline";
   const common = {
     title: opts.title.trim(),
     description: opts.description.trim(),
     category,
     eventKind: opts.eventKind,
+    scheduleKind,
     deponentOrSubject: opts.deponentOrSubject?.trim() || null,
     externalAttendeesText: opts.externalAttendeesText?.trim() || null,
     zoomLink: opts.zoomLink?.trim() || null,

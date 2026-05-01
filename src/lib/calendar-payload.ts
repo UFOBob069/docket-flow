@@ -1,10 +1,16 @@
-import type { CalendarEvent } from "./types";
+import type { CalendarEvent, EventScheduleKind } from "./types";
 
 /** Rich description for Google Calendar (join link, deponent, etc. live in DB fields). */
 export function googleCalendarDescription(
-  ev: Pick<CalendarEvent, "description" | "deponentOrSubject" | "externalAttendeesText" | "zoomLink">
+  ev: Pick<
+    CalendarEvent,
+    "description" | "deponentOrSubject" | "externalAttendeesText" | "zoomLink" | "scheduleKind"
+  >
 ): string {
   const parts: string[] = [];
+  if (ev.scheduleKind === "meeting") {
+    parts.push("Internal meeting (time-based)");
+  }
   if (ev.description?.trim()) parts.push(ev.description.trim());
   if (ev.deponentOrSubject?.trim()) parts.push(`Deponent / subject: ${ev.deponentOrSubject.trim()}`);
   if (ev.externalAttendeesText?.trim()) parts.push(`Attendees / parties: ${ev.externalAttendeesText.trim()}`);
@@ -21,6 +27,7 @@ export type CreateCalendarEventInput = {
   endDateTime?: string;
   /** Shown in Google Calendar as Location (good for Zoom URLs on mobile). */
   location?: string;
+  scheduleKind?: EventScheduleKind;
 };
 
 export type CalendarBatchItem = CreateCalendarEventInput & {
@@ -36,6 +43,7 @@ export function buildCalendarBatches(events: CalendarEvent[]): CalendarBatchItem
       date: e.date,
       description: googleCalendarDescription(e),
       reminderMinutes: e.remindersMinutes,
+      scheduleKind: e.scheduleKind,
       ...(e.startDateTime ? { startDateTime: e.startDateTime } : {}),
       ...(e.endDateTime ? { endDateTime: e.endDateTime } : {}),
       ...(e.zoomLink?.trim() ? { location: e.zoomLink.trim() } : {}),

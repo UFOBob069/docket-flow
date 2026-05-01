@@ -131,6 +131,9 @@ export interface Case {
   updatedAt: number;
 }
 
+/** Court/docket date (usually all-day) vs internal time-based meeting. */
+export type EventScheduleKind = "deadline" | "meeting";
+
 export interface CalendarEvent {
   id: string;
   caseId: string;
@@ -138,6 +141,8 @@ export interface CalendarEvent {
   title: string;
   /** Calendar day for sorting / all-day events (YYYY-MM-DD) */
   date: string;
+  /** Deadline (default, all-day friendly) or internal meeting (time-based). */
+  scheduleKind: EventScheduleKind;
   description: string;
   category: EventCategory;
   eventKind?: EventKind;

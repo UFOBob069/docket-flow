@@ -16,9 +16,10 @@ import {
   manualEventNeedsDeponentField,
   suggestedTitleForManualEvent,
 } from "@/lib/one-off-events";
+import { mergeAttendeeEmailLists } from "@/lib/calendar-global-recipients";
 import { logActivity, saveEvent } from "@/lib/supabase/repo";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
-import type { Case, Contact, EventKind } from "@/lib/types";
+import type { Case, Contact, EventKind, EventScheduleKind } from "@/lib/types";
 import { FixedRemindersReadout } from "@/components/FixedRemindersReadout";
 import { FiveMinuteTimeSelect } from "@/components/FiveMinuteTimeSelect";
 import { formatReminderMinutesList } from "@/lib/reminder-presets";
@@ -88,6 +89,7 @@ export function AddCalendarEventModal({
   const [addExternal, setAddExternal] = useState("");
   const [addNotes, setAddNotes] = useState("");
   const [addExtraInviteeRowIds, setAddExtraInviteeRowIds] = useState<string[]>([]);
+  const [scheduleKind, setScheduleKind] = useState<EventScheduleKind>("deadline");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -119,6 +121,7 @@ export function AddCalendarEventModal({
     setAddExternal("");
     setAddNotes("");
     setAddExtraInviteeRowIds([]);
+    setScheduleKind("deadline");
     setMsg(null);
     if (!lockedCase && casePickerOptions.length) {
       setSelectedCaseId(casePickerOptions[0]!.id);
@@ -128,6 +131,16 @@ export function AddCalendarEventModal({
 
   const effectiveCase =
     lockedCase ?? casePickerOptions.find((c) => c.id === selectedCaseId) ?? null;
+
+  const firmWideContacts = useMemo(
+    () => contacts.filter((ct) => ct.teamCalendarScope === "all_firm_events" && ct.email?.trim()),
+    [contacts]
+  );
+
+  const firmWideEmails = useMemo(
+    () => firmWideContacts.map((ct) => ct.email.trim().toLowerCase()),
+    [firmWideContacts]
+  );
 
   const fixedReminders = useMemo(() => getFixedRemindersForKind(addKind), [addKind]);
 
@@ -167,6 +180,10 @@ export function AddCalendarEventModal({
       setMsg("End time must be after start time on that day.");
       return;
     }
+    if (scheduleKind === "meeting" && !addStartTime.trim()) {
+      setMsg("Meetings need a start time on the event date (internal, time-based).");
+      return;
+    }
     if (addStartTime) {
       const startIso = localDateTimePartsToIso(addEventDate, addStartTime);
       if (Number.isNaN(new Date(startIso).getTime())) {
@@ -186,7 +203,7 @@ export function AddCalendarEventModal({
       const inviteContactIds = [
         ...new Set([...caseRecord.assignedContactIds, ...addExtraInviteeRowIds.filter(Boolean)]),
       ];
-      const attendeeEmails = Array.from(
+      const assigneeEmails = Array.from(
         new Set(
           inviteContactIds
             .map((id) => contacts.find((ct) => ct.id === id)?.email)
@@ -194,8 +211,11 @@ export function AddCalendarEventModal({
             .map((e) => e.trim().toLowerCase())
         )
       );
-      if (attendeeEmails.length === 0) {
-        setMsg("Assign contacts with email addresses before syncing to Google Calendar.");
+      const mergedRecipients = mergeAttendeeEmailLists(assigneeEmails, firmWideEmails);
+      if (mergedRecipients.length === 0) {
+        setMsg(
+          "No calendar recipients: assign contacts with email on the case, add invitees below, or set a contact to “all firm events” under Contacts."
+        );
         setBusy(false);
         return;
       }
@@ -212,6 +232,7 @@ export function AddCalendarEventModal({
         externalAttendeesText: addExternal.trim() || null,
         zoomLink: addZoom.trim() || null,
         remindersMinutes,
+        scheduleKind,
       });
 
       await saveEvent(supabase, caseId, draft);
@@ -230,10 +251,11 @@ export function AddCalendarEventModal({
               reminderMinutes: draft.remindersMinutes,
               startDateTime: draft.startDateTime ?? undefined,
               endDateTime: draft.endDateTime ?? undefined,
+              scheduleKind: draft.scheduleKind,
               ...(draft.zoomLink?.trim() ? { location: draft.zoomLink.trim() } : {}),
             },
           ],
-          attendeeEmails,
+          attendeeEmails: assigneeEmails,
         },
         idToken
       );
@@ -294,8 +316,12 @@ export function AddCalendarEventModal({
             <div>
               <h3 className="text-base font-semibold text-text">Add calendar event</h3>
               <p className="mt-1 text-xs text-text-muted">
-                Step {stepLabel} · Choose the type, then enter date and details. New events are all-day unless you add
-                times. Reminders follow the event type.
+                {phase === "details"
+                  ? scheduleKind === "meeting"
+                    ? `Step ${stepLabel} · Meeting — pick start (and optional end) time on the event date.`
+                    : `Step ${stepLabel} · Deadline — all-day by default; add times only if this date has a specific time.`
+                  : `Step ${stepLabel} · Choose the event type, then date and details on the last step.`}{" "}
+                Reminders follow the taxonomy type.
               </p>
             </div>
           </div>
@@ -417,6 +443,53 @@ export function AddCalendarEventModal({
 
           {phase === "details" && c && (
             <>
+              <div>
+                <Label required>This event is a</Label>
+                <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setScheduleKind("deadline");
+                      setAddStartTime("");
+                      setAddEndTime("");
+                    }}
+                    className={`rounded-xl border-2 px-4 py-3 text-left transition ${
+                      scheduleKind === "deadline"
+                        ? "border-warning/60 bg-warning-light/50 shadow-sm"
+                        : "border-border bg-white hover:bg-surface-alt"
+                    }`}
+                  >
+                    <span className="text-lg" aria-hidden>
+                      ⏰
+                    </span>
+                    <span className="ml-2 text-sm font-semibold text-text">Deadline</span>
+                    <p className="mt-1 text-xs text-text-muted">
+                      Docket / court date. All-day by default (whole day at the top of the calendar).
+                    </p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setScheduleKind("meeting");
+                      setAddStartTime((s) => s || "09:00");
+                      setAddEndTime((e) => e || "10:00");
+                    }}
+                    className={`rounded-xl border-2 px-4 py-3 text-left transition ${
+                      scheduleKind === "meeting"
+                        ? "border-primary/40 bg-primary-light/40 shadow-sm"
+                        : "border-border bg-white hover:bg-surface-alt"
+                    }`}
+                  >
+                    <span className="text-lg" aria-hidden>
+                      📅
+                    </span>
+                    <span className="ml-2 text-sm font-semibold text-text">Meeting</span>
+                    <p className="mt-1 text-xs text-text-muted">
+                      Internal time-based block — start time required; end time optional (+1 hour default).
+                    </p>
+                  </button>
+                </div>
+              </div>
               <div className="rounded-lg border border-border bg-surface-alt/40 px-3 py-2 text-sm">
                 <span className="text-text-muted">Type: </span>
                 <span className="font-medium text-text">
@@ -458,20 +531,34 @@ export function AddCalendarEventModal({
                   onChange={(e) => setAddEventDate(e.target.value)}
                 />
                 <p className="mt-1 text-xs text-text-dim">
-                  Defaults to an <span className="font-medium text-text-secondary">all-day</span> event (whole day at
-                  the top of the calendar). Start and end times, if set, are always on this day.
+                  {scheduleKind === "deadline" ? (
+                    <>
+                      Defaults to an <span className="font-medium text-text-secondary">all-day</span> deadline (whole
+                      day). Add start/end only if this obligation has a specific time on this date.
+                    </>
+                  ) : (
+                    <>
+                      Meeting times are always on this calendar day — use start (required) and end for the internal
+                      block.
+                    </>
+                  )}
                 </p>
               </div>
               <FiveMinuteTimeSelect
-                label="Start time (optional)"
+                label={scheduleKind === "meeting" ? "Start time (required)" : "Start time (optional)"}
                 value={addStartTime}
                 onChange={(t) => {
                   setAddStartTime(t);
                   if (!t) setAddEndTime("");
                 }}
-                allowNoTime
+                allowNoTime={scheduleKind !== "meeting"}
+                required={scheduleKind === "meeting"}
                 noTimeLabel="All day (no specific time)"
-                hint="5-minute increments. All day creates a single calendar day block without a clock time."
+                hint={
+                  scheduleKind === "meeting"
+                    ? "Pick when the internal meeting begins (5-minute increments)."
+                    : "5-minute increments. Leave blank for an all-day deadline."
+                }
               />
               <FiveMinuteTimeSelect
                 label="End time (optional)"
@@ -485,7 +572,9 @@ export function AddCalendarEventModal({
                 hint={
                   addStartTime
                     ? "Same day as the event date. Leave as default for one hour after start."
-                    : "End time does not apply while the event is all-day."
+                    : scheduleKind === "meeting"
+                      ? "Set a start time first."
+                      : "End time does not apply while the event is all-day."
                 }
               />
               <div>
@@ -525,10 +614,11 @@ export function AddCalendarEventModal({
               <div className="rounded-lg border border-border bg-surface-alt/60 px-4 py-3">
                 <Label>Google Calendar invite</Label>
                 <p className="mt-1 text-xs text-text-muted">
-                  Everyone assigned to the case below is included automatically. Add others from your contacts using
-                  the dropdowns (each person needs an email on their contact).
+                  Case assignees and anyone you add below get a copy. People set to{" "}
+                  <span className="font-medium text-text-secondary">all firm events</span> under Contacts are merged
+                  automatically by the server (shown here so you can see the full list).
                 </p>
-                <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-text-dim">On this invite</p>
+                <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-text-dim">Case assignees</p>
                 <ul className="mt-1.5 space-y-1 text-sm text-text">
                   {c.assignedContactIds.length === 0 && (
                     <li className="text-text-muted">No contacts assigned on this case.</li>
@@ -541,6 +631,9 @@ export function AddCalendarEventModal({
                           <>
                             <span className="font-medium">{ct.name}</span>
                             <span className="text-text-muted"> ({ct.role.replace("_", " ")})</span>
+                            {ct.teamCalendarScope === "all_firm_events" && (
+                              <span className="text-text-dim"> · firm-wide calendar</span>
+                            )}
                             {ct.email?.trim() ? (
                               <span className="text-text-dim"> · {ct.email}</span>
                             ) : (
@@ -553,6 +646,28 @@ export function AddCalendarEventModal({
                       </li>
                     );
                   })}
+                </ul>
+                <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-text-dim">
+                  Also on invite (all firm calendar events)
+                </p>
+                <ul className="mt-1.5 space-y-1 text-sm text-text">
+                  {firmWideContacts.filter((ct) => !c.assignedContactIds.includes(ct.id)).length === 0 ? (
+                    <li className="text-text-muted">
+                      {firmWideContacts.some((ct) => c.assignedContactIds.includes(ct.id))
+                        ? "Everyone with firm-wide calendar is already listed under assignees above."
+                        : "No extra contacts — add or flag people under Contacts."}
+                    </li>
+                  ) : (
+                    firmWideContacts
+                      .filter((ct) => !c.assignedContactIds.includes(ct.id))
+                      .map((ct) => (
+                        <li key={ct.id}>
+                          <span className="font-medium">{ct.name}</span>
+                          <span className="text-text-muted"> ({ct.role.replace("_", " ")})</span>
+                          <span className="text-text-dim"> · {ct.email}</span>
+                        </li>
+                      ))
+                  )}
                 </ul>
                 <div className="mt-3 flex items-center justify-between gap-2">
                   <p className="text-xs font-semibold uppercase tracking-wide text-text-dim">
