@@ -7,6 +7,29 @@ export function mergeAttendeeEmailLists(...lists: string[][]): string[] {
   );
 }
 
+const ONE_OFF_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Split comma / semicolon / newline–separated addresses and validate loosely.
+ * Returns normalized lowercase unique emails.
+ */
+export function parseOneOffInviteEmails(raw: string):
+  | { ok: true; emails: string[] }
+  | { ok: false; error: string } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: true, emails: [] };
+  const tokens = trimmed
+    .split(/[\s,;]+/g)
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean);
+  const uniq = Array.from(new Set(tokens));
+  const bad = uniq.find((e) => !ONE_OFF_EMAIL_RE.test(e));
+  if (bad) {
+    return { ok: false, error: `Invalid email address: ${bad}` };
+  }
+  return { ok: true, emails: uniq };
+}
+
 /**
  * Contacts flagged “all firm events” always receive a calendar copy (merged in /api/calendar/sync).
  * Uses the caller’s JWT so firm-wide RLS applies.

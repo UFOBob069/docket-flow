@@ -16,7 +16,10 @@ import {
   manualEventNeedsDeponentField,
   suggestedTitleForManualEvent,
 } from "@/lib/one-off-events";
-import { mergeAttendeeEmailLists } from "@/lib/calendar-global-recipients";
+import {
+  mergeAttendeeEmailLists,
+  parseOneOffInviteEmails,
+} from "@/lib/calendar-global-recipients";
 import { logActivity, saveEvent } from "@/lib/supabase/repo";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
 import type { Case, Contact, EventKind, EventScheduleKind } from "@/lib/types";
@@ -89,6 +92,7 @@ export function AddCalendarEventModal({
   const [addExternal, setAddExternal] = useState("");
   const [addNotes, setAddNotes] = useState("");
   const [addExtraInviteeRowIds, setAddExtraInviteeRowIds] = useState<string[]>([]);
+  const [addOneTimeInviteEmails, setAddOneTimeInviteEmails] = useState("");
   const [scheduleKind, setScheduleKind] = useState<EventScheduleKind>("deadline");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -121,6 +125,7 @@ export function AddCalendarEventModal({
     setAddExternal("");
     setAddNotes("");
     setAddExtraInviteeRowIds([]);
+    setAddOneTimeInviteEmails("");
     setScheduleKind("deadline");
     setMsg(null);
     if (!lockedCase && casePickerOptions.length) {
@@ -184,6 +189,12 @@ export function AddCalendarEventModal({
       setMsg("Meetings need a start time on the event date (internal, time-based).");
       return;
     }
+    const oneOffParsed = parseOneOffInviteEmails(addOneTimeInviteEmails);
+    if (!oneOffParsed.ok) {
+      setMsg(oneOffParsed.error);
+      return;
+    }
+    const oneTimeEmails = oneOffParsed.emails;
     if (addStartTime) {
       const startIso = localDateTimePartsToIso(addEventDate, addStartTime);
       if (Number.isNaN(new Date(startIso).getTime())) {
@@ -211,14 +222,31 @@ export function AddCalendarEventModal({
             .map((e) => e.trim().toLowerCase())
         )
       );
-      const mergedRecipients = mergeAttendeeEmailLists(assigneeEmails, firmWideEmails);
+      const attendeeEmailsForSync = mergeAttendeeEmailLists(assigneeEmails, oneTimeEmails);
+      const mergedRecipients = mergeAttendeeEmailLists(
+        assigneeEmails,
+        firmWideEmails,
+        oneTimeEmails
+      );
       if (mergedRecipients.length === 0) {
         setMsg(
-          "No calendar recipients: assign contacts with email on the case, add invitees below, or set a contact to “all firm events” under Contacts."
+          "No calendar recipients: assign contacts with email on the case, add saved invitees below, enter one-time emails, or set a contact to “all firm events” under Contacts."
         );
         setBusy(false);
         return;
       }
+
+      const externalWithOneTime =
+        addExternal.trim() || oneTimeEmails.length
+          ? [
+              addExternal.trim(),
+              oneTimeEmails.length
+                ? `One-time calendar invitees: ${oneTimeEmails.join(", ")}`
+                : "",
+            ]
+              .filter(Boolean)
+              .join("\n\n")
+          : null;
 
       const draft = createAdHocCalendarEvent(caseId, user.id, {
         eventDate: addEventDate,
@@ -229,7 +257,7 @@ export function AddCalendarEventModal({
         description: addNotes.trim(),
         category: cat,
         deponentOrSubject: addDeponent.trim() || null,
-        externalAttendeesText: addExternal.trim() || null,
+        externalAttendeesText: externalWithOneTime,
         zoomLink: addZoom.trim() || null,
         remindersMinutes,
         scheduleKind,
@@ -255,7 +283,7 @@ export function AddCalendarEventModal({
               ...(draft.zoomLink?.trim() ? { location: draft.zoomLink.trim() } : {}),
             },
           ],
-          attendeeEmails: assigneeEmails,
+          attendeeEmails: attendeeEmailsForSync,
         },
         idToken
       );
@@ -614,7 +642,7 @@ export function AddCalendarEventModal({
               <div className="rounded-lg border border-border bg-surface-alt/60 px-4 py-3">
                 <Label>Google Calendar invite</Label>
                 <p className="mt-1 text-xs text-text-muted">
-                  Case assignees and anyone you add below get a copy. People set to{" "}
+                  Case assignees, optional saved contacts, and one-time email addresses below get a copy. People set to{" "}
                   <span className="font-medium text-text-secondary">all firm events</span> under Contacts are merged
                   automatically by the server (shown here so you can see the full list).
                 </p>
@@ -669,9 +697,24 @@ export function AddCalendarEventModal({
                       ))
                   )}
                 </ul>
+                <div className="mt-3">
+                  <Label>One-time email invites (optional)</Label>
+                  <Textarea
+                    rows={2}
+                    className="mt-1.5 font-mono text-sm"
+                    value={addOneTimeInviteEmails}
+                    onChange={(e) => setAddOneTimeInviteEmails(e.target.value)}
+                    placeholder={
+                      "opposing@example.com, reporter@agency.com\n(one per line or comma-separated — not saved as contacts)"
+                    }
+                  />
+                  <p className="mt-1 text-xs text-text-muted">
+                    Same Google Calendar treatment as your team. For addresses you do not want in the firm contact list.
+                  </p>
+                </div>
                 <div className="mt-3 flex items-center justify-between gap-2">
                   <p className="text-xs font-semibold uppercase tracking-wide text-text-dim">
-                    Add more people (optional)
+                    Add more people from Contacts (optional)
                   </p>
                   <Button
                     type="button"
@@ -685,7 +728,9 @@ export function AddCalendarEventModal({
                 </div>
                 <div className="mt-2 space-y-2">
                   {addExtraInviteeRowIds.length === 0 && (
-                    <p className="text-xs text-text-dim">Use “+ Add person” to invite someone not already on this case.</p>
+                    <p className="text-xs text-text-dim">
+                      Pick a saved contact not already on this case, or use one-time emails above.
+                    </p>
                   )}
                   {addExtraInviteeRowIds.map((rowId, idx) => {
                     const onCase = new Set(c.assignedContactIds);
