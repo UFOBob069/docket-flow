@@ -245,7 +245,9 @@ export default function NewCasePage() {
                 value={solDate}
                 onChange={(e) => setSolDate(e.target.value)}
               />
-              <p className="mt-1 text-xs text-text-dim">Defaults to incident + 2 years. Edit if needed.</p>
+              <p className="mt-1 text-xs text-text-dim">
+                Defaults to incident + 2 years (weekend SOL dates move to the Friday before). Edit if needed.
+              </p>
             </div>
             <div className="rounded-lg border border-border bg-surface-alt/50 px-4 py-3 space-y-3">
               <div>
@@ -258,8 +260,12 @@ export default function NewCasePage() {
                   <strong className="text-text">90 days</strong>, <strong className="text-text">6 weeks</strong>,{" "}
                   <strong className="text-text">4 weeks</strong>, <strong className="text-text">1 week</strong>, and
                   the <strong className="text-text">SOL due date</strong>. If two offsets fall on the same day, only
-                  one calendar row is created for that day. These are <strong className="text-text">not</strong>{" "}
-                  multi-attendee invites; team invites still come from events you add on the case page.
+                  one calendar row is created for that day. If the SOL date falls on a{" "}
+                  <strong className="text-text">Saturday or Sunday</strong>, DocketFlow uses the{" "}
+                  <strong className="text-text">preceding Friday</strong> as the due date before calculating milestones
+                  (same rule when the date defaults from incident + 2 years). These are{" "}
+                  <strong className="text-text">not</strong> multi-attendee invites; team invites still come from
+                  events you add on the case page.
                 </p>
               </div>
               {solMilestonePreview.length > 0 ? (
