@@ -530,14 +530,27 @@ export default function CasesListPage() {
                   const overdueCount = evs.filter(
                     (e) => e.included && !e.completed && !e.noiseFlag && e.date < today
                   ).length;
+                  const isArchived = c.status === "archived";
                   return (
                     <Link
                       key={c.id}
                       href={`/cases/${c.id}`}
-                      className="flex flex-col gap-1.5 px-6 py-4 transition-colors hover:bg-surface-alt sm:flex-row sm:items-center sm:justify-between"
+                      aria-label={isArchived ? `${c.name} — archived case` : undefined}
+                      className={`flex flex-col gap-1.5 px-6 py-4 transition-colors sm:flex-row sm:items-center sm:justify-between ${
+                        isArchived
+                          ? "border-l-[5px] border-warning bg-warning-light/25 hover:bg-warning-light/40"
+                          : "hover:bg-surface-alt"
+                      }`}
                     >
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-text">{c.name}</p>
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                          <p className="truncate text-sm font-semibold text-text">{c.name}</p>
+                          {isArchived && (
+                            <span className="shrink-0 rounded-md border border-warning/50 bg-warning-light px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-warning">
+                              Archived
+                            </span>
+                          )}
+                        </div>
                         <p className="truncate text-sm text-text-muted">{c.clientName}</p>
                         {(c.caseNumber || c.causeNumber) && (
                           <p className="mt-0.5 truncate text-xs text-text-dim">
@@ -560,7 +573,13 @@ export default function CasesListPage() {
                             {overdueCount} overdue
                           </Badge>
                         )}
-                        <Badge variant={c.status === "active" ? "success" : "default"}>{c.status}</Badge>
+                        {c.status === "active" ? (
+                          <Badge variant="success">active</Badge>
+                        ) : (
+                          <Badge variant="warning" className="text-[11px] font-bold uppercase tracking-wide">
+                            archived
+                          </Badge>
+                        )}
                         <svg
                           className="h-4 w-4 text-text-dim"
                           fill="none"

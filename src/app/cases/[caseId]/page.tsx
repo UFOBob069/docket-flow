@@ -23,6 +23,7 @@ import {
   bulkDeleteEvents,
   bulkRescheduleEvents,
   clearEventGoogleCalendarFields,
+  deleteCaseCascade,
   deleteEvent,
   logActivity,
   saveEvent,
@@ -115,6 +116,46 @@ function calendarEventForEdit(e: CalendarEvent): CalendarEvent {
   return e;
 }
 
+function shortDeadlineTitle(title: string, max = 56): string {
+  const t = title.trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, Math.max(0, max - 1))}…`;
+}
+
+/** True when we should strip Google linkage from the DB row (non-ICS events only). */
+function eventNeedsGoogleCalendarClear(ev: CalendarEvent): boolean {
+  if (isGoogleIcsMirrorEvent(ev)) return false;
+  return Boolean(
+    ev.googleEventId ||
+      ev.googleHostCalendarId ||
+      (ev.googleCalendarEventIdsByEmail &&
+        Object.keys(ev.googleCalendarEventIdsByEmail).length > 0)
+  );
+}
+
+/** One step per Google delete + clear, plus finalize (updateCase + activity). */
+function archiveProgressTotalSteps(events: CalendarEvent[]): number {
+  let n = 0;
+  for (const ev of events) {
+    if (isGoogleIcsMirrorEvent(ev)) continue;
+    if (ev.googleEventId) n++;
+    if (eventNeedsGoogleCalendarClear(ev)) n++;
+  }
+  return n + 2;
+}
+
+function permanentDeleteProgressTotalSteps(events: CalendarEvent[]): number {
+  const n = events.filter((e) => !isGoogleIcsMirrorEvent(e) && e.googleEventId).length;
+  return n + 2;
+}
+
+type CaseOperationProgress = {
+  headline: string;
+  phase: string;
+  current: number;
+  total: number;
+};
+
 type VerifyResponse = {
   checkedAt: string;
   summary: { totalChecks: number; ok: number; failed: number };
@@ -136,6 +177,7 @@ export default function CaseDetailPage() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [editing, setEditing] = useState<CalendarEvent | null>(null);
   const [busy, setBusy] = useState(false);
+  const [caseOpProgress, setCaseOpProgress] = useState<CaseOperationProgress | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
@@ -320,28 +362,44 @@ export default function CaseDetailPage() {
       }
       setBusy(true);
       setMsg(null);
+      const totalSteps = archiveProgressTotalSteps(events);
+      let completed = 0;
+      const pulse = (phase: string) => {
+        setCaseOpProgress({
+          headline: "Archiving case",
+          phase,
+          current: completed,
+          total: totalSteps,
+        });
+      };
+      pulse("Starting…");
       try {
         let removed = 0;
         for (const ev of events) {
           if (!isGoogleIcsMirrorEvent(ev) && ev.googleEventId) {
+            pulse(`Removing “${shortDeadlineTitle(ev.title)}” from Google Calendar…`);
             const res = await postCalendarSync(calendarDeletePayload(ev), idToken);
             if (!res.ok) {
               const j = (await res.json()) as { error?: string };
               throw new Error(j.error ?? "Calendar delete failed");
             }
             removed++;
+            completed++;
+            setCaseOpProgress((p) => (p ? { ...p, current: completed } : null));
           }
-          if (
-            !isGoogleIcsMirrorEvent(ev) &&
-            (ev.googleEventId ||
-              ev.googleHostCalendarId ||
-              (ev.googleCalendarEventIdsByEmail &&
-                Object.keys(ev.googleCalendarEventIdsByEmail).length > 0))
-          ) {
+          if (eventNeedsGoogleCalendarClear(ev)) {
+            pulse(`Clearing Google linkage for “${shortDeadlineTitle(ev.title)}” in DocketFlow…`);
             await clearEventGoogleCalendarFields(supabase, caseId, ev.id);
+            completed++;
+            setCaseOpProgress((p) => (p ? { ...p, current: completed } : null));
           }
         }
+        pulse("Marking case as archived…");
         await updateCase(supabase, caseId, { status });
+        completed++;
+        setCaseOpProgress((p) => (p ? { ...p, current: completed } : null));
+
+        pulse("Recording activity…");
         await logActivity(supabase, user.id, {
           caseId,
           caseName: display,
@@ -349,10 +407,14 @@ export default function CaseDetailPage() {
           description: `Archived case — removed ${removed} event(s) from Google Calendar`,
           userEmail: user.email ?? "",
         });
+        completed++;
+        setCaseOpProgress((p) => (p ? { ...p, current: completed } : null));
+
         flash("Case archived — Google Calendar copies removed");
       } catch (e) {
         setMsg(e instanceof Error ? e.message : "Archive failed");
       } finally {
+        setCaseOpProgress(null);
         setBusy(false);
       }
       return;
@@ -415,53 +477,71 @@ export default function CaseDetailPage() {
     } finally { setBusy(false); }
   }
 
-  async function destroyCase() {
+  async function permanentlyDeleteCase() {
     if (!caseId || !c || !user) return;
+    const wasArchived = c.status === "archived";
     if (
       !confirm(
-        "Archive this case and delete all calendar events? Every Google Calendar copy for these deadlines will be removed. The case and all events stay in DocketFlow as archived history."
+        wasArchived
+          ? "Permanently delete this archived case from DocketFlow? All deadlines and events are removed and cannot be recovered.\n\nIf anything is still on Google Calendar, those rows are removed first."
+          : "Permanently delete this case and every deadline from DocketFlow?\n\nGoogle Calendar copies are removed first, then the case and all events are deleted. Archive instead if you only want to keep a read-only history here."
       )
     ) {
       return;
     }
     setBusy(true);
     setMsg(null);
+    const googleTargets = events.filter((e) => !isGoogleIcsMirrorEvent(e) && e.googleEventId);
+    const totalSteps = permanentDeleteProgressTotalSteps(events);
+    let completed = 0;
+    const pulse = (phase: string) => {
+      setCaseOpProgress({
+        headline: wasArchived ? "Deleting archived case" : "Permanently deleting case",
+        phase,
+        current: completed,
+        total: totalSteps,
+      });
+    };
+    pulse("Starting…");
     try {
       const supabase = getBrowserSupabase();
       const display = caseDisplayName(c);
-      let removed = 0;
-      for (const ev of events) {
-        if (!isGoogleIcsMirrorEvent(ev) && ev.googleEventId) {
-          const res = await postCalendarSync(calendarDeletePayload(ev), idToken);
-          if (!res.ok) {
-            const j = (await res.json()) as { error?: string };
-            throw new Error(j.error ?? "Calendar delete failed");
-          }
-          removed++;
+      let googleRemoved = 0;
+      for (const ev of googleTargets) {
+        pulse(`Removing “${shortDeadlineTitle(ev.title)}” from Google Calendar…`);
+        const res = await postCalendarSync(calendarDeletePayload(ev), idToken);
+        if (!res.ok) {
+          const j = (await res.json()) as { error?: string };
+          throw new Error(j.error ?? "Calendar delete failed");
         }
-        if (
-          !isGoogleIcsMirrorEvent(ev) &&
-          (ev.googleEventId ||
-            ev.googleHostCalendarId ||
-            (ev.googleCalendarEventIdsByEmail &&
-              Object.keys(ev.googleCalendarEventIdsByEmail).length > 0))
-        ) {
-          await clearEventGoogleCalendarFields(supabase, caseId, ev.id);
-        }
+        googleRemoved++;
+        completed++;
+        setCaseOpProgress((p) => (p ? { ...p, current: completed } : null));
       }
-      await updateCase(supabase, caseId, { status: "archived" });
+      pulse("Recording activity…");
       await logActivity(supabase, user.id, {
         caseId,
         caseName: display,
-        action: "case_archived",
-        description: `Archived case (Delete case) — removed ${removed} Google Calendar row(s); ${events.length} DocketFlow event(s) retained`,
+        action: "case_deleted",
+        description: wasArchived
+          ? `Permanently deleted archived case — ${events.length} DocketFlow event(s); ${googleRemoved} Google row(s) removed`
+          : `Permanently deleted case — ${events.length} DocketFlow event(s); ${googleRemoved} Google row(s) removed`,
         userEmail: user.email ?? "",
       });
-      flash("Case archived — Google Calendar removed; deadlines kept in DocketFlow");
+      completed++;
+      setCaseOpProgress((p) => (p ? { ...p, current: completed } : null));
+
+      pulse("Deleting case and all deadlines from DocketFlow…");
+      await deleteCaseCascade(supabase, caseId);
+      completed++;
+      setCaseOpProgress((p) => (p ? { ...p, current: completed } : null));
+
+      flash("Case permanently deleted");
       router.push("/cases");
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : "Could not archive case");
+      setMsg(e instanceof Error ? e.message : "Could not delete case");
     } finally {
+      setCaseOpProgress(null);
       setBusy(false);
     }
   }
@@ -712,13 +792,42 @@ export default function CaseDetailPage() {
 
   return (
     <PageWrapper>
+      {c.status === "archived" && (
+        <div
+          role="status"
+          className="mb-4 flex flex-col gap-3 rounded-xl border-2 border-warning/70 bg-warning-light/45 px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div className="min-w-0">
+            <p className="text-base font-bold uppercase tracking-wide text-warning">Archived case</p>
+            <p className="mt-1 text-sm leading-snug text-text-secondary">
+              This matter is off your active docket. Imports and new calendar events are disabled; deadlines stay here
+              for reference until you use <strong className="font-medium text-text">Permanently delete case & deadlines</strong>{" "}
+              below. Google Calendar rows were cleared when the case was archived (any stragglers are removed during delete).
+            </p>
+          </div>
+          <Button
+            variant="secondary"
+            className="shrink-0 sm:ml-4"
+            disabled={busy}
+            onClick={() => void setStatus("active")}
+          >
+            Mark active
+          </Button>
+        </div>
+      )}
       {/* Breadcrumb + header */}
       <div className="mb-2">
         <Link href="/cases" className="text-xs font-medium text-text-muted hover:text-primary">← All Cases</Link>
       </div>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-text lg:text-3xl">{caseDisplayName(c)}</h1>
+          <h1
+            className={`text-2xl font-semibold tracking-tight lg:text-3xl ${
+              c.status === "archived" ? "text-text-secondary" : "text-text"
+            }`}
+          >
+            {caseDisplayName(c)}
+          </h1>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-text-muted">
             {c.name && c.name !== caseDisplayName(c) && <span>{c.name}</span>}
             {c.court && <><span className="text-border-strong">·</span><span>{c.court}</span></>}
@@ -728,7 +837,13 @@ export default function CaseDetailPage() {
                 <span>Incident {c.dateOfIncident}</span>
               </>
             )}
-            <Badge variant={c.status === "active" ? "success" : "default"}>{c.status}</Badge>
+            {c.status === "active" ? (
+              <Badge variant="success">active</Badge>
+            ) : (
+              <Badge variant="warning" className="text-xs font-bold uppercase tracking-wide">
+                archived
+              </Badge>
+            )}
             <span className="text-border-strong">·</span>
             <span className="text-sm text-text-secondary">
               {events.length} event{events.length !== 1 ? "s" : ""}
@@ -789,19 +904,15 @@ export default function CaseDetailPage() {
               </svg>
             </Button>
           )}
-          {c.status === "archived" && (
-            <Button variant="secondary" size="sm" disabled={busy} onClick={() => void setStatus("active")}>
-              Mark active
-            </Button>
-          )}
           <Button
             variant="danger"
             size="sm"
             disabled={busy}
             className="max-w-[min(100%,280px)] whitespace-normal text-center leading-snug"
-            onClick={() => void destroyCase()}
+            title="Remove any remaining Google rows, then delete this case and every deadline from DocketFlow."
+            onClick={() => void permanentlyDeleteCase()}
           >
-            Archive case and Delete All Calendar Events
+            Permanently delete case & deadlines
           </Button>
         </div>
       </div>
@@ -1314,6 +1425,42 @@ export default function CaseDetailPage() {
               </div>
             </CardBody>
           </Card>
+        </div>
+      )}
+
+      {caseOpProgress && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="case-op-progress-title"
+          aria-live="polite"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-border bg-white p-6 shadow-xl">
+            <h2 id="case-op-progress-title" className="text-base font-semibold text-text">
+              {caseOpProgress.headline}
+            </h2>
+            <p className="mt-2 text-sm text-text-secondary">{caseOpProgress.phase}</p>
+            <div className="mt-4 h-2.5 w-full overflow-hidden rounded-full bg-surface-alt">
+              <div
+                className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out"
+                style={{
+                  width: `${
+                    caseOpProgress.total > 0
+                      ? Math.min(100, Math.round((caseOpProgress.current / caseOpProgress.total) * 100))
+                      : 0
+                  }%`,
+                }}
+              />
+            </div>
+            <p className="mt-2 text-xs tabular-nums text-text-dim">
+              Step {caseOpProgress.current} of {caseOpProgress.total}
+            </p>
+            <p className="mt-3 text-xs text-text-muted">
+              Please wait — each Google Calendar request takes a moment. Avoid refreshing; this overlay will disappear
+              when finished.
+            </p>
+          </div>
         </div>
       )}
     </PageWrapper>
