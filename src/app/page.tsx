@@ -309,7 +309,8 @@ export default function DashboardPage() {
       ) {
         return false;
       }
-      if (e.date < timelineStart || e.date > timelineEnd) return false;
+      const isOverdue = classify(e.date, today) === "overdue";
+      if (!isOverdue && (e.date < timelineStart || e.date > timelineEnd)) return false;
       if (!q) return true;
       const hay = [e.title, e.description, c.name, c.clientName, e.deponentOrSubject ?? ""]
         .join("\n")
@@ -324,6 +325,7 @@ export default function DashboardPage() {
     eventKindFilters,
     timelineStart,
     timelineEnd,
+    today,
     contactById,
   ]);
 

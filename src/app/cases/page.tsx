@@ -524,7 +524,12 @@ export default function CasesListPage() {
             <Card className="mt-6">
               <div className="divide-y divide-border">
                 {filtered.map((c) => {
-                  const evCount = eventsByCaseId.get(c.id)?.length ?? 0;
+                  const evs = eventsByCaseId.get(c.id) ?? [];
+                  const evCount = evs.length;
+                  const today = todayIso();
+                  const overdueCount = evs.filter(
+                    (e) => e.included && !e.completed && !e.noiseFlag && e.date < today
+                  ).length;
                   return (
                     <Link
                       key={c.id}
@@ -550,6 +555,11 @@ export default function CasesListPage() {
                         <span className="rounded-full bg-surface-alt px-2.5 py-0.5 text-xs font-medium tabular-nums text-text-secondary">
                           {evCount} event{evCount !== 1 ? "s" : ""}
                         </span>
+                        {overdueCount > 0 && (
+                          <Badge variant="danger">
+                            {overdueCount} overdue
+                          </Badge>
+                        )}
                         <Badge variant={c.status === "active" ? "success" : "default"}>{c.status}</Badge>
                         <svg
                           className="h-4 w-4 text-text-dim"
