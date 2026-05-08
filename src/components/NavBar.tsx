@@ -23,6 +23,7 @@ const navLinks = [
     match: (p: string) => p.startsWith("/backfill"),
   },
   { href: "/contacts", label: "Contacts", match: (p: string) => p.startsWith("/contacts") },
+  { href: "/faq", label: "FAQ", match: (p: string) => p.startsWith("/faq") },
 ];
 
 export function NavBar() {
