@@ -261,6 +261,7 @@ export function AddCalendarEventModal({
         zoomLink: addZoom.trim() || null,
         remindersMinutes,
         scheduleKind,
+        createdByEmail: user.email?.trim() ?? null,
       });
 
       await saveEvent(supabase, caseId, draft);

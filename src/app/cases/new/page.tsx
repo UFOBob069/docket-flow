@@ -126,7 +126,8 @@ export default function NewCasePage() {
         sol,
         doi,
         [...solRemindersMinutes],
-        displayName
+        displayName,
+        user.email ?? null
       );
       for (const ev of solEvents) {
         await saveEvent(supabase, caseId, ev);

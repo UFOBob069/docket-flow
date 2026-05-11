@@ -10,7 +10,7 @@ import { getBrowserSupabase } from "@/lib/supabase/singleton";
 import { caseDisplayName } from "@/lib/case-display";
 import { googleCalendarDescription } from "@/lib/calendar-payload";
 import { postCalendarSync } from "@/lib/calendar-client";
-import { defaultEndIso } from "@/lib/event-factory";
+import { CALENDAR_TIMEZONE, defaultEndIso } from "@/lib/event-factory";
 import { isGoogleIcsMirrorEvent } from "@/lib/calendar-event-origin";
 import { getFixedRemindersForKind, isTaxonomyEventKind } from "@/lib/case-event-kinds";
 import {
@@ -71,6 +71,35 @@ const catBadge: Record<EventCategory, "trial" | "discovery" | "motions" | "pretr
   trial: "trial", discovery: "discovery", motions: "motions",
   pretrial: "pretrial", mediation: "mediation", experts: "experts", other: "other",
 };
+
+const EVENT_DT_FORMAT: Intl.DateTimeFormatOptions = {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  timeZone: CALENDAR_TIMEZONE,
+};
+
+function formatEventAt(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, EVENT_DT_FORMAT);
+}
+
+function eventCreatorLine(
+  ev: CalendarEvent,
+  viewerId?: string | null,
+  viewerEmail?: string | null
+): string {
+  const stored = ev.createdByEmail?.trim();
+  if (stored) return `Created by ${stored}`;
+  if (viewerId && ev.ownerId === viewerId) {
+    const e = viewerEmail?.trim();
+    return e ? `Created by ${e}` : "Created by you";
+  }
+  return "Created by another team member";
+}
 
 function todayYmd(): string {
   return new Date().toISOString().slice(0, 10);
@@ -1153,13 +1182,13 @@ export default function CaseDetailPage() {
                       </span>
                       {ev.startDateTime && (
                         <span className="text-xs font-medium text-text-secondary">
-                          {new Date(ev.startDateTime).toLocaleString(undefined, {
-                            month: "short",
-                            day: "numeric",
-                            year: "numeric",
-                            hour: "numeric",
-                            minute: "2-digit",
-                          })}
+                          {formatEventAt(ev.startDateTime)}
+                          {ev.endDateTime ? (
+                            <>
+                              {" "}
+                              → {formatEventAt(ev.endDateTime)}
+                            </>
+                          ) : null}
                         </span>
                       )}
                       {ev.eventKind && (
@@ -1200,6 +1229,7 @@ export default function CaseDetailPage() {
                       </p>
                     )}
                     {ev.description && <p className="mt-0.5 text-sm text-text-muted line-clamp-2">{ev.description}</p>}
+                    <p className="mt-0.5 text-xs text-text-dim">{eventCreatorLine(ev, user?.id, user?.email)}</p>
                     {ev.externalAttendeesText && (
                       <p className="mt-0.5 text-xs text-text-dim line-clamp-1">
                         <span className="font-medium text-text-muted">Attendees:</span> {ev.externalAttendeesText}

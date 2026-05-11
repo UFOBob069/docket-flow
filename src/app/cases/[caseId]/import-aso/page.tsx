@@ -167,7 +167,7 @@ export default function ImportAsoPage() {
         return;
       }
       if (!user) return;
-      const mapped = extractedToCalendarEvents(caseId, user.id, list);
+      const mapped = extractedToCalendarEvents(caseId, user.id, list, user.email ?? null);
       mapped.sort((a, b) => a.date.localeCompare(b.date));
       setEvents(mapped);
       setStep(1);

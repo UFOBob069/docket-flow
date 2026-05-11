@@ -28,6 +28,7 @@ export function baseEvent(
     mergeWithSameGroup: false,
     noiseFlag: false,
     remindersMinutes: [...DEFAULT_REMINDERS.other],
+    createdByEmail: null,
     createdAt: now,
     updatedAt: now,
     ...overrides,
@@ -42,10 +43,13 @@ export function createSolMilestoneEvents(
   incidentDateIso: string,
   finalReminderMinutes: number[],
   /** When set, event title matches Google: `{stem} - {name}` */
-  calendarCaseName?: string
+  calendarCaseName?: string,
+  /** Creator email for timeline audit */
+  createdByEmail?: string | null
 ): CalendarEvent[] {
   const specs = buildSolMilestoneSpecs(solDateIso, incidentDateIso, finalReminderMinutes);
   const calName = calendarCaseName?.trim();
+  const email = createdByEmail?.trim() || null;
   return specs.map((s) =>
     baseEvent(caseId, ownerId, {
       title: calName ? `${s.googleSummaryStem} - ${calName}` : s.title,
@@ -54,6 +58,7 @@ export function createSolMilestoneEvents(
       category: "other",
       eventKind: s.eventKind,
       remindersMinutes: s.reminderMinutes,
+      ...(email ? { createdByEmail: email } : {}),
     })
   );
 }
@@ -84,10 +89,12 @@ export function createTimedOneOffEvent(
     externalAttendeesText?: string | null;
     zoomLink?: string | null;
     remindersMinutes: number[];
+    createdByEmail?: string | null;
   }
 ): CalendarEvent {
   const date = calendarDayFromDateTime(opts.startDateTime);
   const category = opts.category ?? categoryForManualEventKind(opts.eventKind);
+  const email = opts.createdByEmail?.trim() || null;
   return baseEvent(caseId, ownerId, {
     title: opts.title.trim(),
     date,
@@ -101,6 +108,7 @@ export function createTimedOneOffEvent(
     externalAttendeesText: opts.externalAttendeesText?.trim() || null,
     zoomLink: opts.zoomLink?.trim() || null,
     remindersMinutes: [...opts.remindersMinutes],
+    ...(email ? { createdByEmail: email } : {}),
   });
 }
 
@@ -121,10 +129,12 @@ export function createAdHocCalendarEvent(
     zoomLink?: string | null;
     remindersMinutes: number[];
     scheduleKind?: EventScheduleKind;
+    createdByEmail?: string | null;
   }
 ): CalendarEvent {
   const category = opts.category ?? categoryForManualEventKind(opts.eventKind);
   const scheduleKind = opts.scheduleKind ?? "deadline";
+  const email = opts.createdByEmail?.trim() || null;
   const common = {
     title: opts.title.trim(),
     description: opts.description.trim(),
@@ -135,6 +145,7 @@ export function createAdHocCalendarEvent(
     externalAttendeesText: opts.externalAttendeesText?.trim() || null,
     zoomLink: opts.zoomLink?.trim() || null,
     remindersMinutes: [...opts.remindersMinutes],
+    ...(email ? { createdByEmail: email } : {}),
   };
   if (opts.startTime) {
     const startIso = localDateTimePartsToIso(opts.eventDate, opts.startTime);

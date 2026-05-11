@@ -72,6 +72,7 @@ function eventFromRow(r: Record<string, unknown>): CalendarEvent {
     noiseReason: (r.noise_reason as string) ?? undefined,
     remindersMinutes: (r.reminders_minutes as number[]) ?? [],
     emailRemindersSent: (r.email_reminders_sent as number[]) ?? undefined,
+    createdByEmail: (r.created_by_email as string | null | undefined) ?? null,
     createdAt: Number(r.created_at),
     updatedAt: Number(r.updated_at),
   };
@@ -137,6 +138,7 @@ function eventToRow(ev: CalendarEvent, ownerId: string): Record<string, unknown>
     noise_reason: ev.noiseReason ?? null,
     reminders_minutes: ev.remindersMinutes,
     email_reminders_sent: ev.emailRemindersSent ?? null,
+    created_by_email: ev.createdByEmail ?? null,
     created_at: ev.createdAt,
     updated_at: ev.updatedAt,
   });

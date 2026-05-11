@@ -91,11 +91,14 @@ export function isNoise(description: string, title: string): {
 export function extractedToCalendarEvents(
   caseId: string,
   ownerId: string,
-  rows: ExtractedDeadline[]
+  rows: ExtractedDeadline[],
+  /** Google workspace email of the user running the import */
+  createdByEmail?: string | null
 ): CalendarEvent[] {
   const deduped = dedupeExtracted(rows);
   const withGroups = assignGroupSuggestions(deduped);
   const now = Date.now();
+  const email = createdByEmail?.trim() || null;
   return withGroups.map(({ row, groupId }) => {
     const { noise, reason } = isNoise(row.description, row.title);
     const eventKind = parseExtractedEventKind(row.eventKind);
@@ -120,6 +123,7 @@ export function extractedToCalendarEvents(
       noiseFlag: noise,
       noiseReason: reason,
       remindersMinutes: [...getRemindersForEventKind(eventKind)],
+      ...(email ? { createdByEmail: email } : {}),
       createdAt: now,
       updatedAt: now,
     };

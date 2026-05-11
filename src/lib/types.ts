@@ -177,6 +177,8 @@ export interface CalendarEvent {
   noiseReason?: string;
   remindersMinutes: number[];
   emailRemindersSent?: number[];
+  /** Set on insert — creator’s @ramosjames.com email for timeline display */
+  createdByEmail?: string | null;
   createdAt: number;
   updatedAt: number;
 }

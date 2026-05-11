@@ -212,6 +212,7 @@ export default function BackfillPage() {
           title: row.title,
           description: row.description,
           remindersMinutes: [...getRemindersForEventKind(row.eventKind)],
+          createdByEmail: user.email?.trim() ?? null,
         });
         await saveEvent(supabase, c.id, event);
         imported++;
@@ -271,6 +272,7 @@ export default function BackfillPage() {
           title: row.title,
           description: row.description,
           remindersMinutes: [...getRemindersForEventKind(row.eventKind)],
+          createdByEmail: user.email?.trim() ?? null,
         });
         await saveEvent(supabase, c.id, event);
         imported++;
