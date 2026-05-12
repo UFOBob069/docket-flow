@@ -27,6 +27,8 @@ type CreateBody = {
     endDateTime?: string;
     location?: string;
     scheduleKind?: "deadline" | "meeting";
+    /** Google Calendar `colorId` (Peacock, Lavender, …). */
+    googleColorId?: string | null;
   }[];
   attendeeEmails: string[];
 };
@@ -46,6 +48,7 @@ type PatchBody = {
   endDateTime?: string;
   location?: string | null;
   scheduleKind?: "deadline" | "meeting";
+  googleColorId?: string | null;
 };
 
 type DeleteBody = {
@@ -82,6 +85,7 @@ type ReconcileBody = {
     googleEventId?: string;
     googleCalendarEventIdsByEmail?: Record<string, string>;
     scheduleKind?: "deadline" | "meeting";
+    googleColorId?: string | null;
   }[];
 };
 
@@ -138,6 +142,7 @@ export async function POST(req: Request): Promise<Response> {
           reminderMinutes: body.reminderMinutes ?? [20160, 10080, 1440],
           location: body.location,
           scheduleKind: body.scheduleKind,
+          googleColorId: body.googleColorId,
         });
       }
       return NextResponse.json({ ok: true });
@@ -164,6 +169,7 @@ export async function POST(req: Request): Promise<Response> {
           startDateTime: ev.startDateTime,
           endDateTime: ev.endDateTime,
           location: ev.location,
+          googleColorId: ev.googleColorId,
           attendeeEmails,
           idsByEmail: ev.googleCalendarEventIdsByEmail,
           googleEventId: ev.googleEventId,
@@ -236,6 +242,7 @@ export async function POST(req: Request): Promise<Response> {
           endDateTime: ev.endDateTime,
           location: ev.location,
           scheduleKind: ev.scheduleKind ?? "deadline",
+          googleColorId: ev.googleColorId,
         });
         googleEventIds.push(organizerEventId);
         googleEventIdMaps.push(idsByEmail);

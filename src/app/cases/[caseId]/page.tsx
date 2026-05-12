@@ -45,6 +45,7 @@ import { AddCalendarEventModal } from "@/components/AddCalendarEventModal";
 import { FixedRemindersReadout } from "@/components/FixedRemindersReadout";
 import { MonthlyEventCalendar } from "@/components/MonthlyEventCalendar";
 import { PageSkeleton } from "@/components/PageSkeleton";
+import { GoogleCalendarInviteColorPicker } from "@/components/GoogleCalendarInviteColorPicker";
 import { ReminderMinutesEditor } from "@/components/ReminderMinutesEditor";
 import { FiveMinuteTimeSelect } from "@/components/FiveMinuteTimeSelect";
 import {
@@ -633,6 +634,7 @@ export default function CaseDetailPage() {
           scheduleKind: updated.scheduleKind,
           ...(updated.startDateTime ? { startDateTime: updated.startDateTime } : {}),
           ...(updated.endDateTime ? { endDateTime: updated.endDateTime } : {}),
+          ...(updated.googleColorId !== undefined ? { googleColorId: updated.googleColorId } : {}),
         }, idToken);
         if (!res.ok) { const j = (await res.json()) as { error?: string }; throw new Error(j.error ?? "Calendar update failed"); }
       }
@@ -707,6 +709,7 @@ export default function CaseDetailPage() {
           scheduleKind: ev.scheduleKind,
           ...(ev.startDateTime ? { startDateTime: ev.startDateTime } : {}),
           ...(ev.endDateTime ? { endDateTime: ev.endDateTime } : {}),
+          ...(ev.googleColorId !== undefined ? { googleColorId: ev.googleColorId } : {}),
         }, idToken);
         if (!res.ok) {
           const j = (await res.json()) as { error?: string };
@@ -767,6 +770,7 @@ export default function CaseDetailPage() {
               ...(ev.endDateTime ? { endDateTime: ev.endDateTime } : {}),
               googleEventId: ev.googleEventId,
               googleCalendarEventIdsByEmail: ev.googleCalendarEventIdsByEmail,
+              ...(ev.googleColorId !== undefined ? { googleColorId: ev.googleColorId } : {}),
             })),
           },
           idToken
@@ -1417,6 +1421,12 @@ export default function CaseDetailPage() {
                   placeholder="https://…"
                 />
               </div>
+              {!isGoogleIcsMirrorEvent(editing) && (
+                <GoogleCalendarInviteColorPicker
+                  value={editing.googleColorId}
+                  onChange={(next) => setEditing({ ...editing, googleColorId: next })}
+                />
+              )}
               <div>
                 <Label>External attendees / parties</Label>
                 <Textarea

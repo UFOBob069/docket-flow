@@ -1,4 +1,5 @@
 import type { CalendarEvent, EventScheduleKind } from "./types";
+import { normalizeGoogleCalendarInviteColorId } from "./google-calendar-invite-colors";
 
 /** Rich description for Google Calendar (join link, deponent, etc. live in DB fields). */
 export function googleCalendarDescription(
@@ -28,6 +29,8 @@ export type CreateCalendarEventInput = {
   /** Shown in Google Calendar as Location (good for Zoom URLs on mobile). */
   location?: string;
   scheduleKind?: EventScheduleKind;
+  /** Google Calendar API `colorId` (Peacock, Lavender, …). */
+  googleColorId?: string | null;
 };
 
 export type CalendarBatchItem = CreateCalendarEventInput & {
@@ -38,15 +41,19 @@ export type CalendarBatchItem = CreateCalendarEventInput & {
 export function buildCalendarBatches(events: CalendarEvent[]): CalendarBatchItem[] {
   return events
     .filter((e) => e.included && !e.completed)
-    .map((e) => ({
-      title: e.title,
-      date: e.date,
-      description: googleCalendarDescription(e),
-      reminderMinutes: e.remindersMinutes,
-      scheduleKind: e.scheduleKind,
-      ...(e.startDateTime ? { startDateTime: e.startDateTime } : {}),
-      ...(e.endDateTime ? { endDateTime: e.endDateTime } : {}),
-      ...(e.zoomLink?.trim() ? { location: e.zoomLink.trim() } : {}),
-      sourceEventIds: [e.id],
-    }));
+    .map((e) => {
+      const gc = normalizeGoogleCalendarInviteColorId(e.googleColorId ?? undefined);
+      return {
+        title: e.title,
+        date: e.date,
+        description: googleCalendarDescription(e),
+        reminderMinutes: e.remindersMinutes,
+        scheduleKind: e.scheduleKind,
+        ...(e.startDateTime ? { startDateTime: e.startDateTime } : {}),
+        ...(e.endDateTime ? { endDateTime: e.endDateTime } : {}),
+        ...(e.zoomLink?.trim() ? { location: e.zoomLink.trim() } : {}),
+        ...(gc != null ? { googleColorId: gc } : e.googleColorId === null ? { googleColorId: null } : {}),
+        sourceEventIds: [e.id],
+      };
+    });
 }

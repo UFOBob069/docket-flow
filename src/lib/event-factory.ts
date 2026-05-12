@@ -4,6 +4,7 @@ import { DEFAULT_REMINDERS } from "./reminder-presets";
 import { categoryForManualEventKind } from "./one-off-events";
 import { localDateTimePartsToIso } from "./five-minute-datetime";
 import { buildSolMilestoneSpecs } from "./sol-milestones";
+import { normalizeGoogleCalendarInviteColorId } from "./google-calendar-invite-colors";
 
 export const CALENDAR_TIMEZONE = "America/Chicago";
 
@@ -90,11 +91,13 @@ export function createTimedOneOffEvent(
     zoomLink?: string | null;
     remindersMinutes: number[];
     createdByEmail?: string | null;
+    googleColorId?: string | null;
   }
 ): CalendarEvent {
   const date = calendarDayFromDateTime(opts.startDateTime);
   const category = opts.category ?? categoryForManualEventKind(opts.eventKind);
   const email = opts.createdByEmail?.trim() || null;
+  const gc = normalizeGoogleCalendarInviteColorId(opts.googleColorId ?? undefined);
   return baseEvent(caseId, ownerId, {
     title: opts.title.trim(),
     date,
@@ -109,6 +112,7 @@ export function createTimedOneOffEvent(
     zoomLink: opts.zoomLink?.trim() || null,
     remindersMinutes: [...opts.remindersMinutes],
     ...(email ? { createdByEmail: email } : {}),
+    ...(gc != null ? { googleColorId: gc } : opts.googleColorId === null ? { googleColorId: null } : {}),
   });
 }
 
@@ -130,11 +134,15 @@ export function createAdHocCalendarEvent(
     remindersMinutes: number[];
     scheduleKind?: EventScheduleKind;
     createdByEmail?: string | null;
+    googleColorId?: string | null;
   }
 ): CalendarEvent {
   const category = opts.category ?? categoryForManualEventKind(opts.eventKind);
   const scheduleKind = opts.scheduleKind ?? "deadline";
   const email = opts.createdByEmail?.trim() || null;
+  const gc = normalizeGoogleCalendarInviteColorId(opts.googleColorId ?? undefined);
+  const colorPatch =
+    gc != null ? { googleColorId: gc } : opts.googleColorId === null ? { googleColorId: null } : {};
   const common = {
     title: opts.title.trim(),
     description: opts.description.trim(),
@@ -146,6 +154,7 @@ export function createAdHocCalendarEvent(
     zoomLink: opts.zoomLink?.trim() || null,
     remindersMinutes: [...opts.remindersMinutes],
     ...(email ? { createdByEmail: email } : {}),
+    ...colorPatch,
   };
   if (opts.startTime) {
     const startIso = localDateTimePartsToIso(opts.eventDate, opts.startTime);

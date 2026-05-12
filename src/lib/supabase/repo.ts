@@ -8,6 +8,7 @@ import type {
   EventCategory,
   EventKind,
 } from "@/lib/types";
+import { normalizeGoogleCalendarInviteColorId } from "@/lib/google-calendar-invite-colors";
 
 type Unsubscribe = () => void;
 
@@ -72,6 +73,7 @@ function eventToRow(ev: CalendarEvent, ownerId: string): Record<string, unknown>
     reminders_minutes: reminders,
     email_reminders_sent: emailSent.length ? emailSent : null,
     created_by_email: ev.createdByEmail?.trim() || null,
+    google_color_id: normalizeGoogleCalendarInviteColorId(ev.googleColorId ?? undefined) ?? null,
     created_at: createdAt,
     updated_at: updatedAt,
   });
@@ -101,6 +103,9 @@ function caseFromRow(r: Record<string, unknown>): Case {
 }
 
 function eventFromRow(r: Record<string, unknown>): CalendarEvent {
+  const gc = normalizeGoogleCalendarInviteColorId(
+    (r.google_color_id as string | null | undefined) ?? undefined
+  );
   return {
     id: r.id as string,
     caseId: r.case_id as string,
@@ -133,6 +138,7 @@ function eventFromRow(r: Record<string, unknown>): CalendarEvent {
     remindersMinutes: (r.reminders_minutes as number[]) ?? [],
     emailRemindersSent: (r.email_reminders_sent as number[]) ?? undefined,
     createdByEmail: (r.created_by_email as string | null | undefined) ?? null,
+    ...(gc ? { googleColorId: gc } : {}),
     createdAt: Number(r.created_at),
     updatedAt: Number(r.updated_at),
   };

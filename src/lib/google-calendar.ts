@@ -1,4 +1,5 @@
 import { google } from "googleapis";
+import { normalizeGoogleCalendarInviteColorId } from "@/lib/google-calendar-invite-colors";
 
 const MAX_REMINDER_MIN = 40320;
 
@@ -54,6 +55,13 @@ export function getMeetingOrganizerEmail(): string {
   const reminder = process.env.GOOGLE_REMINDER_EMAIL?.trim();
   if (reminder) return reminder;
   return getDefaultUser();
+}
+
+/** For `events.patch`: omit = leave color; null = clear; string = set if valid. */
+function colorIdForGooglePatch(raw: string | null | undefined): string | null | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === null || String(raw).trim() === "") return null;
+  return normalizeGoogleCalendarInviteColorId(String(raw).trim()) ?? undefined;
 }
 
 const FREE_BUSY_MAX_ITEMS = 45;
@@ -180,6 +188,8 @@ type EventPayload = {
   /** Zoom / meet link — surfaces prominently in Google Calendar */
   location?: string;
   timeZone?: string;
+  /** Google Calendar API event palette id (optional). */
+  colorId?: string;
 };
 
 function isTimedPayload(params: EventPayload): boolean {
@@ -205,6 +215,7 @@ function buildInsertRequestBody(params: EventPayload): Record<string, unknown> {
       end: { dateTime: end, timeZone: tz },
       reminders: { useDefault: false, overrides },
       ...(params.location?.trim() ? { location: params.location.trim() } : {}),
+      ...(params.colorId ? { colorId: params.colorId } : {}),
     };
   }
   const day = params.dateIso ?? params.startDateTime?.slice(0, 10) ?? "";
@@ -215,6 +226,7 @@ function buildInsertRequestBody(params: EventPayload): Record<string, unknown> {
     end: { date: day },
     reminders: { useDefault: false, overrides },
     ...(params.location?.trim() ? { location: params.location.trim() } : {}),
+    ...(params.colorId ? { colorId: params.colorId } : {}),
   };
 }
 
@@ -281,6 +293,8 @@ function buildPatchBody(params: {
   endDateTime?: string;
   reminderMinutes?: number[];
   location?: string | null;
+  /** Omit to leave unchanged; `null` clears to default calendar color. */
+  colorId?: string | null;
 }): Record<string, unknown> {
   const body: Record<string, unknown> = {};
   if (params.summary !== undefined) body.summary = params.summary;
@@ -306,6 +320,9 @@ function buildPatchBody(params: {
       useDefault: false,
       overrides: buildOverrides(params.reminderMinutes),
     };
+  }
+  if (params.colorId !== undefined) {
+    body.colorId = params.colorId;
   }
   return body;
 }
@@ -351,7 +368,10 @@ export async function insertGoogleEvent(params: {
   endDateTime?: string | null;
   location?: string | null;
   scheduleKind?: "deadline" | "meeting";
+  /** Google Calendar event palette id (optional). */
+  googleColorId?: string | null;
 }): Promise<{ organizerEventId: string; idsByEmail: Record<string, string> }> {
+  const cid = normalizeGoogleCalendarInviteColorId(params.googleColorId ?? undefined);
   const payload: EventPayload = {
     summary: params.summary,
     description: params.description,
@@ -360,6 +380,7 @@ export async function insertGoogleEvent(params: {
     startDateTime: params.startDateTime ?? undefined,
     endDateTime: params.endDateTime ?? undefined,
     location: params.location?.trim() || undefined,
+    ...(cid ? { colorId: cid } : {}),
   };
 
   if (params.scheduleKind === "meeting") {
@@ -420,8 +441,19 @@ export async function patchGoogleEvent(params: {
   reminderMinutes?: number[];
   location?: string | null;
   scheduleKind?: "deadline" | "meeting";
+  /** Omit = leave color; null = default color; else palette id. */
+  googleColorId?: string | null;
 }): Promise<void> {
-  const patchBody = buildPatchBody(params);
+  const patchBody = buildPatchBody({
+    summary: params.summary,
+    description: params.description,
+    dateIso: params.dateIso,
+    startDateTime: params.startDateTime,
+    endDateTime: params.endDateTime,
+    reminderMinutes: params.reminderMinutes,
+    location: params.location,
+    colorId: colorIdForGooglePatch(params.googleColorId),
+  });
   if (Object.keys(patchBody).length === 0) return;
 
   if (params.scheduleKind === "meeting") {
@@ -501,6 +533,7 @@ export async function reconcileCalendarEventTeam(params: {
   startDateTime?: string;
   endDateTime?: string;
   location?: string | null;
+  googleColorId?: string | null;
   /** Prior map (may be partial for legacy events) */
   idsByEmail?: Record<string, string>;
   /** Legacy single id on organizer calendar only */
@@ -562,6 +595,7 @@ export async function reconcileCalendarEventTeam(params: {
     oldMap[defaultLower] = params.googleEventId;
   }
 
+  const cid = normalizeGoogleCalendarInviteColorId(params.googleColorId ?? undefined);
   const payload: EventPayload = {
     summary: params.summary,
     description: params.description,
@@ -570,6 +604,7 @@ export async function reconcileCalendarEventTeam(params: {
     startDateTime: params.startDateTime,
     endDateTime: params.endDateTime,
     location: params.location?.trim() || undefined,
+    ...(cid ? { colorId: cid } : {}),
   };
 
   for (const el of [...Object.keys(oldMap)]) {

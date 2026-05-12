@@ -25,7 +25,9 @@ import { getBrowserSupabase } from "@/lib/supabase/singleton";
 import type { Case, Contact, EventKind, EventScheduleKind } from "@/lib/types";
 import { FixedRemindersReadout } from "@/components/FixedRemindersReadout";
 import { FiveMinuteTimeSelect } from "@/components/FiveMinuteTimeSelect";
+import { GoogleCalendarInviteColorPicker } from "@/components/GoogleCalendarInviteColorPicker";
 import { formatReminderMinutesList } from "@/lib/reminder-presets";
+import { normalizeGoogleCalendarInviteColorId } from "@/lib/google-calendar-invite-colors";
 import {
   addMinutesToLocalClock,
   defaultLocalStartParts,
@@ -98,6 +100,7 @@ export function AddCalendarEventModal({
   const [addOneTimeInviteEmails, setAddOneTimeInviteEmails] = useState("");
   const [scheduleKind, setScheduleKind] = useState<EventScheduleKind>("deadline");
   const [meetingDurationMin, setMeetingDurationMin] = useState(60);
+  const [addGoogleColorId, setAddGoogleColorId] = useState<string | null>(null);
   const [openSlotsLoading, setOpenSlotsLoading] = useState(false);
   const [openSlotStarts, setOpenSlotStarts] = useState<string[] | null>(null);
   const [openSlotWarnings, setOpenSlotWarnings] = useState<string[] | null>(null);
@@ -135,6 +138,7 @@ export function AddCalendarEventModal({
     setAddOneTimeInviteEmails("");
     setScheduleKind("deadline");
     setMeetingDurationMin(60);
+    setAddGoogleColorId(null);
     setOpenSlotStarts(null);
     setOpenSlotWarnings(null);
     setMsg(null);
@@ -277,11 +281,13 @@ export function AddCalendarEventModal({
         remindersMinutes,
         scheduleKind,
         createdByEmail: user.email?.trim() ?? null,
+        googleColorId: addGoogleColorId,
       });
 
       await saveEvent(supabase, caseId, draft);
 
       const calDesc = googleCalendarDescription(draft);
+      const syncGc = normalizeGoogleCalendarInviteColorId(draft.googleColorId ?? undefined);
       const calRes = await postCalendarSync(
         {
           action: "create",
@@ -297,6 +303,11 @@ export function AddCalendarEventModal({
               endDateTime: draft.endDateTime ?? undefined,
               scheduleKind: draft.scheduleKind,
               ...(draft.zoomLink?.trim() ? { location: draft.zoomLink.trim() } : {}),
+              ...(syncGc != null
+                ? { googleColorId: syncGc }
+                : draft.googleColorId === null
+                  ? { googleColorId: null }
+                  : {}),
             },
           ],
           attendeeEmails: attendeeEmailsForSync,
@@ -797,7 +808,13 @@ export function AddCalendarEventModal({
                   <span className="font-medium text-text-secondary">all firm events</span> under Contacts are merged
                   automatically by the server (shown here so you can see the full list).
                 </p>
-                <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-text-dim">Case assignees</p>
+                <div className="mt-3">
+                  <GoogleCalendarInviteColorPicker
+                    value={addGoogleColorId}
+                    onChange={setAddGoogleColorId}
+                  />
+                </div>
+                <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-text-dim">Case assignees</p>
                 <ul className="mt-1.5 space-y-1 text-sm text-text">
                   {c.assignedContactIds.length === 0 && (
                     <li className="text-text-muted">No contacts assigned on this case.</li>

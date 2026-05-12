@@ -179,6 +179,11 @@ export interface CalendarEvent {
   emailRemindersSent?: number[];
   /** Set on insert — creator’s @ramosjames.com email for timeline display */
   createdByEmail?: string | null;
+  /**
+   * Optional Google Calendar event `colorId` (palette chip). Omitted = default color.
+   * Set to `null` to clear a previously saved color on sync.
+   */
+  googleColorId?: string | null;
   createdAt: number;
   updatedAt: number;
 }
