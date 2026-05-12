@@ -2,7 +2,17 @@ import { google } from "googleapis";
 
 const MAX_REMINDER_MIN = 40320;
 
-function getAuthForUser(subject: string) {
+/** DWD must include this scope for create/update/delete + events.get (verify). */
+const SCOPES_CALENDAR_EVENTS = ["https://www.googleapis.com/auth/calendar.events"];
+
+/**
+ * Narrow scope for Free/Busy only — add separately in Admin so firms that only delegated
+ * `calendar.events` are not forced to add full `calendar.readonly` (which would block JWT
+ * token exchange if missing from the delegation list).
+ */
+const SCOPES_CALENDAR_FREEBUSY = ["https://www.googleapis.com/auth/calendar.freebusy"];
+
+function getJwtForSubject(subject: string, scopes: string[]) {
   const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
   const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n");
 
@@ -13,13 +23,17 @@ function getAuthForUser(subject: string) {
   return new google.auth.JWT({
     email: clientEmail,
     key: privateKey,
-    scopes: [
-      "https://www.googleapis.com/auth/calendar.events",
-      /** FreeBusy + `events.get` verification; add to Workspace domain-wide delegation. */
-      "https://www.googleapis.com/auth/calendar.readonly",
-    ],
+    scopes,
     subject,
   });
+}
+
+function getAuthForUser(subject: string) {
+  return getJwtForSubject(subject, SCOPES_CALENDAR_EVENTS);
+}
+
+function getAuthForFreeBusy(subject: string) {
+  return getJwtForSubject(subject, SCOPES_CALENDAR_FREEBUSY);
 }
 
 function getDefaultUser(): string {
@@ -87,7 +101,7 @@ export async function queryMeetingOpenSlotStarts(params: {
     )
   ).slice(0, FREE_BUSY_MAX_ITEMS);
 
-  const auth = getAuthForUser(organizer);
+  const auth = getAuthForFreeBusy(organizer);
   const calendar = google.calendar({ version: "v3", auth });
   const res = await calendar.freebusy.query({
     requestBody: {
