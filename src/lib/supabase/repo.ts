@@ -17,6 +17,66 @@ function clean<T extends Record<string, unknown>>(obj: T): T {
   ) as T;
 }
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function formatSupabaseWriteError(context: string, err: { message?: string; details?: string; hint?: string; code?: string }): string {
+  const parts = [err.message, err.details, err.hint].filter(Boolean);
+  const base = parts.join(" — ") || "Unknown error";
+  return err.code ? `${context} (${err.code}): ${base}` : `${context}: ${base}`;
+}
+
+/** Coerce app state → DB-safe row (avoids PostgREST 400s from null NOT NULL, bad arrays, invalid uuid[]). */
+function eventToRow(ev: CalendarEvent, ownerId: string): Record<string, unknown> {
+  const now = Date.now();
+  const createdAt = Number.isFinite(ev.createdAt) && ev.createdAt > 0 ? ev.createdAt : now;
+  const updatedAt = Number.isFinite(ev.updatedAt) && ev.updatedAt > 0 ? ev.updatedAt : now;
+  const scheduleKind = ev.scheduleKind === "meeting" ? "meeting" : "deadline";
+  const origin = ev.calendarOrigin === "google_ics_mirror" ? "google_ics_mirror" : "docketflow";
+  const reminders = (ev.remindersMinutes ?? [])
+    .map((m) => Math.round(Number(m)))
+    .filter((m) => Number.isFinite(m) && m >= 0);
+  const emailSent = (ev.emailRemindersSent ?? [])
+    .map((m) => Math.round(Number(m)))
+    .filter((m) => Number.isFinite(m) && m >= 0);
+  const extraIds =
+    ev.extraInternalContactIds?.filter((id) => typeof id === "string" && UUID_RE.test(id.trim())) ?? [];
+  return clean({
+    id: ev.id,
+    case_id: ev.caseId,
+    user_id: ownerId,
+    title: (ev.title ?? "").trim() || "Untitled event",
+    date: ev.date,
+    schedule_kind: scheduleKind,
+    description: typeof ev.description === "string" ? ev.description : "",
+    category: ev.category ?? "other",
+    event_kind: ev.eventKind ?? null,
+    start_date_time: ev.startDateTime ?? null,
+    end_date_time: ev.endDateTime ?? null,
+    deponent_or_subject: ev.deponentOrSubject ?? null,
+    external_attendees_text: ev.externalAttendeesText ?? null,
+    extra_internal_contact_ids: extraIds.length ? extraIds : null,
+    zoom_link: ev.zoomLink ?? null,
+    priority: ev.priority ?? null,
+    calendar_origin: origin,
+    google_event_id: ev.googleEventId?.trim() || null,
+    google_calendar_event_ids_by_email: ev.googleCalendarEventIdsByEmail ?? null,
+    google_host_calendar_id: ev.googleHostCalendarId?.trim() || null,
+    included: ev.included !== false,
+    completed: Boolean(ev.completed),
+    group_suggested: Boolean(ev.groupSuggested),
+    group_id: ev.groupId ?? null,
+    merge_with_same_group: Boolean(ev.mergeWithSameGroup),
+    noise_flag: Boolean(ev.noiseFlag),
+    noise_reason: ev.noiseReason ?? null,
+    reminders_minutes: reminders,
+    email_reminders_sent: emailSent.length ? emailSent : null,
+    created_by_email: ev.createdByEmail?.trim() || null,
+    created_at: createdAt,
+    updated_at: updatedAt,
+  });
+}
+
 /* ── Row mappers ─────────────────────────────────────────────────── */
 
 function caseFromRow(r: Record<string, unknown>): Case {
@@ -104,44 +164,6 @@ function activityFromRow(r: Record<string, unknown>): ActivityEntry {
     userEmail: r.user_email as string,
     createdAt: Number(r.created_at),
   };
-}
-
-function eventToRow(ev: CalendarEvent, ownerId: string): Record<string, unknown> {
-  return clean({
-    id: ev.id,
-    case_id: ev.caseId,
-    user_id: ownerId,
-    title: ev.title,
-    date: ev.date,
-    schedule_kind: ev.scheduleKind ?? "deadline",
-    description: ev.description,
-    category: ev.category,
-    event_kind: ev.eventKind ?? null,
-    start_date_time: ev.startDateTime ?? null,
-    end_date_time: ev.endDateTime ?? null,
-    deponent_or_subject: ev.deponentOrSubject ?? null,
-    external_attendees_text: ev.externalAttendeesText ?? null,
-    extra_internal_contact_ids:
-      ev.extraInternalContactIds?.length ? ev.extraInternalContactIds : null,
-    zoom_link: ev.zoomLink ?? null,
-    priority: ev.priority ?? null,
-    calendar_origin: ev.calendarOrigin ?? "docketflow",
-    google_event_id: ev.googleEventId ?? null,
-    google_calendar_event_ids_by_email: ev.googleCalendarEventIdsByEmail ?? null,
-    google_host_calendar_id: ev.googleHostCalendarId ?? null,
-    included: ev.included,
-    completed: ev.completed ?? false,
-    group_suggested: ev.groupSuggested,
-    group_id: ev.groupId ?? null,
-    merge_with_same_group: ev.mergeWithSameGroup ?? false,
-    noise_flag: ev.noiseFlag,
-    noise_reason: ev.noiseReason ?? null,
-    reminders_minutes: ev.remindersMinutes,
-    email_reminders_sent: ev.emailRemindersSent ?? null,
-    created_by_email: ev.createdByEmail ?? null,
-    created_at: ev.createdAt,
-    updated_at: ev.updatedAt,
-  });
 }
 
 /* ── Cases ───────────────────────────────────────────────────────── */
@@ -498,7 +520,7 @@ export async function setEventsForCase(
   if (!events.length) return;
   const rows = events.map((e) => eventToRow({ ...e, caseId, ownerId }, ownerId));
   const { error } = await supabase.from("case_events").upsert(rows, { onConflict: "id" });
-  if (error) throw error;
+  if (error) throw new Error(formatSupabaseWriteError("case_events upsert", error));
 }
 
 export async function saveEvent(
@@ -511,7 +533,7 @@ export async function saveEvent(
     event.ownerId
   );
   const { error } = await supabase.from("case_events").upsert(row, { onConflict: "id" });
-  if (error) throw error;
+  if (error) throw new Error(formatSupabaseWriteError("case_events save", error));
 }
 
 export async function clearEventGoogleCalendarFields(
