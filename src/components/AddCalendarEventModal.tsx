@@ -394,7 +394,7 @@ export function AddCalendarEventModal({
     setMsg(null);
     try {
       const timeMin = localDateTimePartsToIso(addEventDate, "09:00");
-      const timeMax = localDateTimePartsToIso(addEventDate, "18:00");
+      const timeMax = localDateTimePartsToIso(addEventDate, "17:00");
       const res = await fetch("/api/calendar/freebusy", {
         method: "POST",
         headers: {
@@ -683,8 +683,9 @@ export function AddCalendarEventModal({
                     }}
                   />
                   <p className="mt-1 text-xs text-text-muted">
-                    15-minute steps. Used with Google Calendar Free/Busy (9:00–18:00 on the event date in your local
-                    time) to suggest open start times for everyone on the invite list.
+                    Meeting length uses 15-minute steps. Open-time suggestions use Google Calendar Free/Busy on the
+                    event date, only between 9:00 AM and 5:00 PM in your local time, on the hour and half hour (:00 and
+                    :30).
                   </p>
                   <Button
                     type="button"

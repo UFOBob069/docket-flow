@@ -65,8 +65,25 @@ function colorIdForGooglePatch(raw: string | null | undefined): string | null | 
 }
 
 const FREE_BUSY_MAX_ITEMS = 45;
-const SLOT_STEP_MS = 5 * 60 * 1000;
+/** Suggest meeting starts only on :00 and :30 (local wall time of `timeMin` / `timeMax`). */
+const HALF_HOUR_MS = 30 * 60 * 1000;
 const MAX_SLOT_SUGGESTIONS = 12;
+
+/** Smallest timestamp ≥ `fromMs` on a half-hour boundary in the same local timezone as `new Date(fromMs)`. */
+function alignUpToHalfHourSlot(fromMs: number): number {
+  const d = new Date(fromMs);
+  d.setSeconds(0, 0);
+  const m = d.getMinutes();
+  if (m === 0 || m === 30) {
+    return d.getTime();
+  }
+  if (m < 30) {
+    d.setMinutes(30, 0, 0);
+  } else {
+    d.setHours(d.getHours() + 1, 0, 0, 0);
+  }
+  return d.getTime();
+}
 
 function mergeBusyIntervalsMs(intervals: [number, number][]): [number, number][] {
   if (intervals.length === 0) return [];
@@ -153,7 +170,7 @@ export async function queryMeetingOpenSlotStarts(params: {
   const durMs = durMin * 60 * 1000;
   const slotStartIsoCandidates: string[] = [];
 
-  for (let s = t0; s + durMs <= t1; s += SLOT_STEP_MS) {
+  for (let s = alignUpToHalfHourSlot(t0); s + durMs <= t1; s += HALF_HOUR_MS) {
     const e = s + durMs;
     const clashes = merged.some(([b0, b1]) => b1 > s && b0 < e);
     if (!clashes) {
