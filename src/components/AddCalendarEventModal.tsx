@@ -27,8 +27,11 @@ import { FixedRemindersReadout } from "@/components/FixedRemindersReadout";
 import { FiveMinuteTimeSelect } from "@/components/FiveMinuteTimeSelect";
 import { formatReminderMinutesList } from "@/lib/reminder-presets";
 import {
+  addMinutesToLocalClock,
   defaultLocalStartParts,
+  formatTimeOptionLabel,
   isEndTimeAfterStartTime,
+  isoToLocalDateTimeParts,
   localDateTimePartsToIso,
 } from "@/lib/five-minute-datetime";
 import {
@@ -94,6 +97,10 @@ export function AddCalendarEventModal({
   const [addExtraInviteeRowIds, setAddExtraInviteeRowIds] = useState<string[]>([]);
   const [addOneTimeInviteEmails, setAddOneTimeInviteEmails] = useState("");
   const [scheduleKind, setScheduleKind] = useState<EventScheduleKind>("deadline");
+  const [meetingDurationMin, setMeetingDurationMin] = useState(60);
+  const [openSlotsLoading, setOpenSlotsLoading] = useState(false);
+  const [openSlotStarts, setOpenSlotStarts] = useState<string[] | null>(null);
+  const [openSlotWarnings, setOpenSlotWarnings] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -127,12 +134,20 @@ export function AddCalendarEventModal({
     setAddExtraInviteeRowIds([]);
     setAddOneTimeInviteEmails("");
     setScheduleKind("deadline");
+    setMeetingDurationMin(60);
+    setOpenSlotStarts(null);
+    setOpenSlotWarnings(null);
     setMsg(null);
     if (!lockedCase && casePickerOptions.length) {
       setSelectedCaseId(casePickerOptions[0]!.id);
     }
     setCaseQuery("");
   }, [open, lockedCase?.id, pickerKey]);
+
+  useEffect(() => {
+    setOpenSlotStarts(null);
+    setOpenSlotWarnings(null);
+  }, [addEventDate, scheduleKind, meetingDurationMin]);
 
   const effectiveCase =
     lockedCase ?? casePickerOptions.find((c) => c.id === selectedCaseId) ?? null;
@@ -331,6 +346,72 @@ export function AddCalendarEventModal({
 
   function goBack() {
     if (wizardStep > 0) setWizardStep((s) => s - 1);
+  }
+
+  async function fetchOpenMeetingSlots() {
+    const caseRecord = effectiveCase;
+    if (!caseRecord || !idToken || scheduleKind !== "meeting") return;
+    if (!addEventDate.trim()) {
+      setMsg("Pick an event date first.");
+      return;
+    }
+    const oneOffParsed = parseOneOffInviteEmails(addOneTimeInviteEmails);
+    if (!oneOffParsed.ok) {
+      setMsg(oneOffParsed.error);
+      return;
+    }
+    const inviteContactIds = [
+      ...new Set([...caseRecord.assignedContactIds, ...addExtraInviteeRowIds.filter(Boolean)]),
+    ];
+    const assigneeEmails = Array.from(
+      new Set(
+        inviteContactIds
+          .map((id) => contacts.find((ct) => ct.id === id)?.email)
+          .filter((e): e is string => Boolean(e?.trim()))
+          .map((e) => e.trim().toLowerCase())
+      )
+    );
+    const attendeeEmails = mergeAttendeeEmailLists(assigneeEmails, oneOffParsed.emails);
+    if (attendeeEmails.length === 0) {
+      setMsg(
+        "Add at least one email to check: assign contacts on the case, add one-time invites, or use firm-wide calendar contacts."
+      );
+      return;
+    }
+
+    setOpenSlotsLoading(true);
+    setMsg(null);
+    try {
+      const timeMin = localDateTimePartsToIso(addEventDate, "09:00");
+      const timeMax = localDateTimePartsToIso(addEventDate, "18:00");
+      const res = await fetch("/api/calendar/freebusy", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          timeMin,
+          timeMax,
+          durationMinutes: meetingDurationMin,
+          attendeeEmails,
+        }),
+      });
+      const json = (await res.json()) as {
+        slotStartIsoCandidates?: string[];
+        calendarWarnings?: string[];
+        error?: string;
+      };
+      if (!res.ok) throw new Error(json.error ?? "Could not load open times");
+      setOpenSlotStarts(json.slotStartIsoCandidates ?? []);
+      setOpenSlotWarnings(json.calendarWarnings?.length ? json.calendarWarnings : null);
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Could not load open times");
+      setOpenSlotStarts(null);
+      setOpenSlotWarnings(null);
+    } finally {
+      setOpenSlotsLoading(false);
+    }
   }
 
   if (!open) return null;
@@ -573,6 +654,75 @@ export function AddCalendarEventModal({
                   )}
                 </p>
               </div>
+              {scheduleKind === "meeting" && (
+                <div className="rounded-lg border border-border bg-primary-light/20 px-3 py-3">
+                  <Label>Meeting length (minutes)</Label>
+                  <Input
+                    type="number"
+                    className="mt-1.5 max-w-32"
+                    min={15}
+                    max={480}
+                    step={15}
+                    value={meetingDurationMin}
+                    onChange={(e) => {
+                      const n = parseInt(e.target.value, 10);
+                      if (Number.isNaN(n)) return;
+                      const snapped = Math.round(n / 15) * 15;
+                      setMeetingDurationMin(Math.min(480, Math.max(15, snapped)));
+                    }}
+                  />
+                  <p className="mt-1 text-xs text-text-muted">
+                    15-minute steps. Used with Google Calendar Free/Busy (9:00–18:00 on the event date in your local
+                    time) to suggest open start times for everyone on the invite list.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="mt-2"
+                    disabled={openSlotsLoading || !idToken}
+                    onClick={() => void fetchOpenMeetingSlots()}
+                  >
+                    {openSlotsLoading ? "Checking…" : "Suggest open times"}
+                  </Button>
+                  {openSlotStarts && (
+                    <div className="mt-3">
+                      <p className="text-xs font-medium text-text">
+                        {openSlotStarts.length === 0
+                          ? "No fully open slots in that window for this length."
+                          : "Tap a start time:"}
+                      </p>
+                      {openSlotStarts.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {openSlotStarts.map((iso) => {
+                            const { time } = isoToLocalDateTimeParts(iso);
+                            if (!time) return null;
+                            return (
+                              <button
+                                key={iso}
+                                type="button"
+                                className="rounded-full border border-primary/40 bg-white px-3 py-1 text-sm font-medium text-primary shadow-sm hover:bg-primary-light/60"
+                                onClick={() => {
+                                  setAddStartTime(time);
+                                  setAddEndTime(
+                                    addMinutesToLocalClock(addEventDate, time, meetingDurationMin)
+                                  );
+                                }}
+                              >
+                                {formatTimeOptionLabel(time)}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {openSlotWarnings && openSlotWarnings.length > 0 && (
+                    <p className="mt-2 text-xs text-warning">
+                      Some calendars could not be read (treated as busy): {openSlotWarnings.join(" · ")}
+                    </p>
+                  )}
+                </div>
+              )}
               <FiveMinuteTimeSelect
                 label={scheduleKind === "meeting" ? "Start time (required)" : "Start time (optional)"}
                 value={addStartTime}

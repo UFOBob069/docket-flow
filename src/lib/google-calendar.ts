@@ -13,7 +13,11 @@ function getAuthForUser(subject: string) {
   return new google.auth.JWT({
     email: clientEmail,
     key: privateKey,
-    scopes: ["https://www.googleapis.com/auth/calendar.events"],
+    scopes: [
+      "https://www.googleapis.com/auth/calendar.events",
+      /** FreeBusy + `events.get` verification; add to Workspace domain-wide delegation. */
+      "https://www.googleapis.com/auth/calendar.readonly",
+    ],
     subject,
   });
 }
@@ -36,6 +40,110 @@ export function getMeetingOrganizerEmail(): string {
   const reminder = process.env.GOOGLE_REMINDER_EMAIL?.trim();
   if (reminder) return reminder;
   return getDefaultUser();
+}
+
+const FREE_BUSY_MAX_ITEMS = 45;
+const SLOT_STEP_MS = 5 * 60 * 1000;
+const MAX_SLOT_SUGGESTIONS = 12;
+
+function mergeBusyIntervalsMs(intervals: [number, number][]): [number, number][] {
+  if (intervals.length === 0) return [];
+  const sorted = [...intervals].sort((a, b) => a[0] - b[0]);
+  const out: [number, number][] = [sorted[0]!];
+  for (let i = 1; i < sorted.length; i++) {
+    const cur = sorted[i]!;
+    const last = out[out.length - 1]!;
+    if (cur[0] <= last[1]) last[1] = Math.max(last[1], cur[1]);
+    else out.push(cur);
+  }
+  return out;
+}
+
+/**
+ * FreeBusy across invitees + meeting organizer (impersonated subject = organizer).
+ * `timeMin` / `timeMax` must be RFC3339 (e.g. from the same local date+time logic as event creation).
+ */
+export async function queryMeetingOpenSlotStarts(params: {
+  timeMin: string;
+  timeMax: string;
+  durationMinutes: number;
+  attendeeEmails: string[];
+}): Promise<{ slotStartIsoCandidates: string[]; calendarWarnings?: string[] }> {
+  const organizer = getMeetingOrganizerEmail();
+  const orgLower = organizer.toLowerCase();
+  const t0 = new Date(params.timeMin).getTime();
+  const t1 = new Date(params.timeMax).getTime();
+  const durMin = params.durationMinutes;
+  if (Number.isNaN(t0) || Number.isNaN(t1) || t0 >= t1) {
+    throw new Error("Invalid time window");
+  }
+  if (!Number.isFinite(durMin) || durMin < 5 || durMin > 24 * 60) {
+    throw new Error("Meeting length must be between 5 and 1440 minutes");
+  }
+
+  const emails = Array.from(
+    new Set(
+      [...params.attendeeEmails.map((e) => e.trim().toLowerCase()).filter(Boolean), orgLower]
+    )
+  ).slice(0, FREE_BUSY_MAX_ITEMS);
+
+  const auth = getAuthForUser(organizer);
+  const calendar = google.calendar({ version: "v3", auth });
+  const res = await calendar.freebusy.query({
+    requestBody: {
+      timeMin: new Date(t0).toISOString(),
+      timeMax: new Date(t1).toISOString(),
+      items: emails.map((id) => ({ id })),
+    },
+  });
+
+  type CalEntry = {
+    busy?: { start?: string | null; end?: string | null }[];
+    errors?: { reason?: string; domain?: string }[];
+  };
+  const calendars = (res.data.calendars ?? {}) as Record<string, CalEntry>;
+  const warnings: string[] = [];
+  const busyPieces: [number, number][] = [];
+
+  for (const id of emails) {
+    const cal = calendars[id];
+    if (!cal) {
+      warnings.push(`${id}: no calendar data`);
+      busyPieces.push([t0, t1]);
+      continue;
+    }
+    if (cal.errors?.length) {
+      warnings.push(
+        `${id}: ${cal.errors.map((e) => e.reason ?? e.domain ?? "error").join(", ")}`
+      );
+      busyPieces.push([t0, t1]);
+      continue;
+    }
+    for (const b of cal.busy ?? []) {
+      if (!b.start || !b.end) continue;
+      const a = new Date(b.start).getTime();
+      const z = new Date(b.end).getTime();
+      if (!Number.isNaN(a) && !Number.isNaN(z) && z > a) busyPieces.push([a, z]);
+    }
+  }
+
+  const merged = mergeBusyIntervalsMs(busyPieces);
+  const durMs = durMin * 60 * 1000;
+  const slotStartIsoCandidates: string[] = [];
+
+  for (let s = t0; s + durMs <= t1; s += SLOT_STEP_MS) {
+    const e = s + durMs;
+    const clashes = merged.some(([b0, b1]) => b1 > s && b0 < e);
+    if (!clashes) {
+      slotStartIsoCandidates.push(new Date(s).toISOString());
+      if (slotStartIsoCandidates.length >= MAX_SLOT_SUGGESTIONS) break;
+    }
+  }
+
+  return {
+    slotStartIsoCandidates,
+    ...(warnings.length ? { calendarWarnings: warnings } : {}),
+  };
 }
 
 function buildOverrides(minutes: number[]) {

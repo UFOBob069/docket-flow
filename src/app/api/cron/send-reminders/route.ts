@@ -67,6 +67,12 @@ export async function GET(req: Request): Promise<Response> {
           skipped++;
           continue;
         }
+        /** Firm SOL pack (shared calendar): lead-ups + due date — Google already reminds; skip DocketFlow email. */
+        const kind = ev.event_kind as string | undefined;
+        if (kind === "sol" || kind === "sol_milestone") {
+          skipped++;
+          continue;
+        }
         const eventDate = ev.date as string;
         const remindersMinutes = (ev.reminders_minutes as number[]) ?? [];
         const alreadySent = (ev.email_reminders_sent as number[]) ?? [];

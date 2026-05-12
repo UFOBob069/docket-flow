@@ -74,3 +74,15 @@ export function isEndTimeAfterStartTime(startHhmm: string, endHhmm: string): boo
   if ([sh, sm, eh, em].some((n) => Number.isNaN(n))) return false;
   return eh * 60 + em > sh * 60 + sm;
 }
+
+/** Wall-clock time on a calendar day after adding minutes (same semantics as `localDateTimePartsToIso`). */
+export function addMinutesToLocalClock(dateYmd: string, timeHhmm: string, addMinutes: number): string {
+  const [y, mo, da] = dateYmd.split("-").map((x) => parseInt(x, 10));
+  const [h, mi] = timeHhmm.split(":").map((x) => parseInt(x, 10));
+  if ([y, mo, da, h, mi].some((n) => Number.isNaN(n))) return timeHhmm;
+  const d = new Date(y, mo - 1, da, h, mi, 0, 0);
+  d.setMinutes(d.getMinutes() + addMinutes);
+  return snapTimeToFiveMinutes(
+    `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`
+  );
+}
