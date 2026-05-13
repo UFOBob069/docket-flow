@@ -7,7 +7,7 @@ import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
 import { buildCalendarBatches } from "@/lib/calendar-payload";
-import { getRemindersForEventKind } from "@/lib/case-event-kinds";
+import { DEFAULT_CASE_EVENT_KIND, getRemindersForEventKind } from "@/lib/case-event-kinds";
 import { extractedToCalendarEvents } from "@/lib/deadline-processing";
 import { caseDisplayName } from "@/lib/case-display";
 import { ALL_EVENT_KIND_SELECT_GROUPS, categoryForManualEventKind } from "@/lib/one-off-events";
@@ -82,6 +82,11 @@ export default function ImportAsoPage() {
   const [progressPct, setProgressPct] = useState(0);
   const [err, setErr] = useState<string | null>(null);
   const [datesValidatedConfirmed, setDatesValidatedConfirmed] = useState(false);
+
+  const [manualDeadlineDate, setManualDeadlineDate] = useState("");
+  const [manualDeadlineKind, setManualDeadlineKind] = useState<EventKind>(DEFAULT_CASE_EVENT_KIND);
+  const [manualDeadlineTitle, setManualDeadlineTitle] = useState("");
+  const [manualDeadlineDescription, setManualDeadlineDescription] = useState("");
 
   useEffect(() => {
     if (step !== 3) setDatesValidatedConfirmed(false);
@@ -186,6 +191,44 @@ export default function ImportAsoPage() {
 
   function removeEventRow(id: string) {
     setEvents((prev) => prev.filter((e) => e.id !== id));
+  }
+
+  function addManualDeadlineRow() {
+    if (!user?.id || !caseId) return;
+    const date = manualDeadlineDate.trim();
+    const title = manualDeadlineTitle.trim();
+    if (!date) {
+      setErr("Enter a date for the deadline you are adding.");
+      return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      setErr("Use a valid calendar date (YYYY-MM-DD).");
+      return;
+    }
+    if (!title) {
+      setErr("Enter a title for the deadline you are adding.");
+      return;
+    }
+    const row: ExtractedDeadline = {
+      date,
+      title,
+      description: manualDeadlineDescription.trim(),
+      eventKind: manualDeadlineKind,
+    };
+    const [ev] = extractedToCalendarEvents(caseId, user.id, [row], user.email ?? null);
+    if (!ev) return;
+    const manual: CalendarEvent = {
+      ...ev,
+      included: true,
+      noiseFlag: false,
+      noiseReason: undefined,
+      groupSuggested: false,
+      groupId: undefined,
+    };
+    setEvents((prev) => [...prev, manual].sort((a, b) => a.date.localeCompare(b.date)));
+    setManualDeadlineTitle("");
+    setManualDeadlineDescription("");
+    setErr(null);
   }
 
   async function finalize() {
@@ -598,6 +641,72 @@ export default function ImportAsoPage() {
               </Card>
             ))}
           </div>
+
+          <Card className="border-dashed border-2 border-primary/30 bg-primary-light/10">
+            <CardHeader>
+              <h3 className="text-sm font-semibold text-text">Missed a deadline?</h3>
+              <p className="mt-1 text-xs text-text-muted">
+                If the AI skipped an obligation from the document, add it here before continuing. It appears in the
+                list above and syncs like the others when included.
+              </p>
+            </CardHeader>
+            <CardBody className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <Label required>Date</Label>
+                  <Input
+                    type="date"
+                    className="mt-1.5"
+                    value={manualDeadlineDate}
+                    onChange={(e) => setManualDeadlineDate(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label required>Event type</Label>
+                  <Select
+                    className="mt-1.5 text-sm"
+                    value={manualDeadlineKind}
+                    onChange={(e) => setManualDeadlineKind(e.target.value as EventKind)}
+                  >
+                    {ALL_EVENT_KIND_SELECT_GROUPS.map((g) => (
+                      <optgroup key={g.topic} label={g.topic}>
+                        {g.options.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </Select>
+                </div>
+              </div>
+              <div>
+                <Label required>Title</Label>
+                <Input
+                  className="mt-1.5"
+                  value={manualDeadlineTitle}
+                  onChange={(e) => setManualDeadlineTitle(e.target.value)}
+                  placeholder="e.g. Expert report due"
+                />
+              </div>
+              <div>
+                <Label>Description (optional)</Label>
+                <Textarea
+                  rows={2}
+                  className="mt-1.5"
+                  value={manualDeadlineDescription}
+                  onChange={(e) => setManualDeadlineDescription(e.target.value)}
+                  placeholder="Source cite or notes"
+                />
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button type="button" variant="secondary" onClick={addManualDeadlineRow}>
+                  Add deadline
+                </Button>
+                <FixedRemindersReadout minutes={getRemindersForEventKind(manualDeadlineKind)} />
+              </div>
+            </CardBody>
+          </Card>
 
           <div className="flex gap-3 pt-2">
             <Button variant="secondary" onClick={() => setStep(0)}>Back</Button>
