@@ -8,7 +8,7 @@ import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
 import { caseDisplayName } from "@/lib/case-display";
-import { googleCalendarDescription } from "@/lib/calendar-payload";
+import { buildCalendarBatches, googleCalendarDescription, hasGoogleCalendarSync } from "@/lib/calendar-payload";
 import { postCalendarSync } from "@/lib/calendar-client";
 import { CALENDAR_TIMEZONE, defaultEndIso } from "@/lib/event-factory";
 import {
@@ -31,6 +31,7 @@ import {
   clearEventGoogleCalendarFields,
   deleteCaseCascade,
   deleteEvent,
+  fetchEventsForCase,
   logActivity,
   saveEvent,
   subscribeCase,
@@ -230,6 +231,8 @@ export default function CaseDetailPage() {
 
   const [verifyBusy, setVerifyBusy] = useState(false);
   const [verifyResult, setVerifyResult] = useState<VerifyResponse | null>(null);
+  const [gapSyncBusy, setGapSyncBusy] = useState(false);
+  const gapSyncLock = useRef(false);
 
   const [showAddEvent, setShowAddEvent] = useState(false);
   const [eventViewMode, setEventViewMode] = useState<"timeline" | "month">("timeline");
@@ -249,6 +252,18 @@ export default function CaseDetailPage() {
 
   const sortedEvents = useMemo(
     () => [...events].sort(compareEventsBySchedule),
+    [events]
+  );
+
+  const unsyncedGoogleCount = useMemo(
+    () =>
+      events.filter(
+        (e) =>
+          !isGoogleIcsMirrorEvent(e) &&
+          !e.completed &&
+          e.included &&
+          !hasGoogleCalendarSync(e)
+      ).length,
     [events]
   );
 
@@ -333,6 +348,113 @@ export default function CaseDetailPage() {
       setMsg(e instanceof Error ? e.message : "Verification failed");
     } finally {
       setVerifyBusy(false);
+    }
+  }
+
+  async function syncMissingGoogleInvites() {
+    if (!caseId || !c || !user || !idToken || c.status !== "active") return;
+    if (gapSyncLock.current) return;
+    gapSyncLock.current = true;
+    setGapSyncBusy(true);
+    setMsg(null);
+    try {
+      const supabase = getBrowserSupabase();
+      const fresh = await fetchEventsForCase(supabase, caseId);
+      const toCreate = fresh.filter(
+        (e) =>
+          !isGoogleIcsMirrorEvent(e) &&
+          !e.completed &&
+          e.included &&
+          !hasGoogleCalendarSync(e)
+      );
+      if (toCreate.length === 0) {
+        flash("All included deadlines already have Google Calendar invites.");
+        return;
+      }
+      const batches = buildCalendarBatches(toCreate);
+      if (batches.length === 0) {
+        flash("Nothing to sync to Google Calendar.");
+        return;
+      }
+      const assigned = c.assignedContactIds ?? [];
+      const attendeeEmails = Array.from(
+        new Set(
+          assigned
+            .map((id) => contacts.find((ct) => ct.id === id)?.email)
+            .filter((e): e is string => Boolean(e))
+        )
+      );
+      const displayName = caseDisplayName(c);
+      const res = await postCalendarSync(
+        {
+          action: "create",
+          caseName: displayName,
+          sourceLabel: "DocketFlow — catch-up sync",
+          events: batches.map((b) => ({
+            title: b.title,
+            date: b.date,
+            description: b.description,
+            reminderMinutes: b.reminderMinutes,
+            ...(b.scheduleKind ? { scheduleKind: b.scheduleKind } : {}),
+            ...(b.startDateTime ? { startDateTime: b.startDateTime } : {}),
+            ...(b.endDateTime ? { endDateTime: b.endDateTime } : {}),
+            ...(b.location ? { location: b.location } : {}),
+            ...(typeof b.googleColorId !== "undefined" ? { googleColorId: b.googleColorId } : {}),
+            ...(typeof b.deadlineEndDate !== "undefined" ? { deadlineEndDate: b.deadlineEndDate } : {}),
+          })),
+          attendeeEmails,
+        },
+        idToken
+      );
+      const calJson = (await res.json()) as {
+        googleEventIds?: string[];
+        googleEventIdMaps?: Record<string, string>[];
+        error?: string;
+      };
+      if (!res.ok) throw new Error(calJson.error ?? "Google Calendar create failed");
+      const googleEventIds = calJson.googleEventIds ?? [];
+      const googleEventIdMaps = calJson.googleEventIdMaps ?? [];
+      let withGoogle = fresh.map((e) => ({ ...e }));
+      for (let i = 0; i < batches.length; i++) {
+        const ge = googleEventIds[i];
+        const map = googleEventIdMaps[i];
+        if (!ge) continue;
+        for (const eid of batches[i].sourceEventIds) {
+          withGoogle = withGoogle.map((ev) =>
+            ev.id === eid
+              ? {
+                  ...ev,
+                  googleEventId: ge,
+                  ...(map && Object.keys(map).length ? { googleCalendarEventIdsByEmail: map } : {}),
+                }
+              : ev
+          );
+        }
+      }
+      const touched = new Set<string>();
+      for (let i = 0; i < batches.length; i++) {
+        for (const eid of batches[i].sourceEventIds) touched.add(eid);
+      }
+      const toSave = withGoogle.filter((ev) => touched.has(ev.id) && hasGoogleCalendarSync(ev));
+      await Promise.all(toSave.map((ev) => saveEvent(supabase, caseId, ev)));
+      await logActivity(supabase, user.id, {
+        caseId,
+        caseName: displayName,
+        action: "event_created",
+        description: `Created Google Calendar invites for ${toSave.length} deadline(s) that were missing sync`,
+        userEmail: user.email ?? "",
+      });
+      flash(`Created ${toSave.length} missing Google Calendar invite${toSave.length !== 1 ? "s" : ""}`);
+    } catch (e) {
+      let message = e instanceof Error ? e.message : "Could not create missing invites";
+      if (message === "Failed to fetch") {
+        message =
+          "Network error or timeout while syncing. Refresh this page in a moment—some invites may have been created anyway.";
+      }
+      setMsg(message);
+    } finally {
+      gapSyncLock.current = false;
+      setGapSyncBusy(false);
     }
   }
 
@@ -995,6 +1117,26 @@ export default function CaseDetailPage() {
           </Button>
         </div>
       </div>
+
+      {c.status === "active" && unsyncedGoogleCount > 0 && (
+        <div className="mt-4 flex flex-col gap-3 rounded-lg border border-primary/25 bg-primary/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-text">
+            <span className="font-medium text-text">{unsyncedGoogleCount}</span>{" "}
+            {unsyncedGoogleCount === 1 ? "deadline is" : "deadlines are"} in DocketFlow but{" "}
+            {unsyncedGoogleCount === 1 ? "does not have" : "do not have"} a Google Calendar invite yet
+            (for example after a timeout during import). This only creates invites for rows still missing sync.
+          </p>
+          <Button
+            variant="primary"
+            size="sm"
+            className="shrink-0"
+            disabled={busy || gapSyncBusy || !idToken}
+            onClick={() => void syncMissingGoogleInvites()}
+          >
+            {gapSyncBusy ? "Creating…" : "Create missing Google invites"}
+          </Button>
+        </div>
+      )}
 
       {/* Assigned contacts */}
       <Card className="mt-6">

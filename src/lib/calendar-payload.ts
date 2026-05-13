@@ -1,6 +1,15 @@
 import type { CalendarEvent, EventScheduleKind } from "./types";
 import { normalizeGoogleCalendarInviteColorId } from "./google-calendar-invite-colors";
 
+/** True when this row already has a Google Calendar row — do not create again (import retries, gap fill). */
+export function hasGoogleCalendarSync(ev: CalendarEvent): boolean {
+  if (ev.calendarOrigin === "google_ics_mirror") return false;
+  if (ev.googleHostCalendarId?.trim()) return true;
+  if (ev.googleEventId?.trim()) return true;
+  const m = ev.googleCalendarEventIdsByEmail;
+  return Boolean(m && Object.keys(m).length > 0);
+}
+
 /** Rich description for Google Calendar (join link, deponent, etc. live in DB fields). */
 export function googleCalendarDescription(
   ev: Pick<

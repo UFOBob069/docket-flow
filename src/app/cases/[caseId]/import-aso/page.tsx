@@ -1,17 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
-import { buildCalendarBatches } from "@/lib/calendar-payload";
+import { buildCalendarBatches, hasGoogleCalendarSync } from "@/lib/calendar-payload";
 import { DEFAULT_CASE_EVENT_KIND, getRemindersForEventKind } from "@/lib/case-event-kinds";
 import { extractedToCalendarEvents } from "@/lib/deadline-processing";
 import { caseDisplayName } from "@/lib/case-display";
 import { ALL_EVENT_KIND_SELECT_GROUPS, categoryForManualEventKind } from "@/lib/one-off-events";
 import {
+  fetchEventsForCase,
   logActivity,
   saveEvent,
   setEventsForCase,
@@ -49,6 +50,21 @@ const catBadge: Record<EventCategory, "trial" | "discovery" | "motions" | "pretr
   mediation: "mediation", experts: "experts", other: "other",
 };
 
+/** Preserve google_* from DB when the wizard client state is stale after a failed or timed-out import. */
+function mergeGoogleIdsFromDb(local: CalendarEvent[], fromDb: CalendarEvent[]): CalendarEvent[] {
+  const byId = new Map(fromDb.map((e) => [e.id, e]));
+  return local.map((ev) => {
+    const db = byId.get(ev.id);
+    if (!db || !hasGoogleCalendarSync(db)) return ev;
+    return {
+      ...ev,
+      googleEventId: db.googleEventId ?? ev.googleEventId,
+      googleCalendarEventIdsByEmail: db.googleCalendarEventIdsByEmail ?? ev.googleCalendarEventIdsByEmail,
+      googleHostCalendarId: db.googleHostCalendarId ?? ev.googleHostCalendarId,
+    };
+  });
+}
+
 const stepLabels = ["Document", "Review", "Assign", "Confirm"];
 
 export default function ImportAsoPage() {
@@ -82,6 +98,8 @@ export default function ImportAsoPage() {
   const [progressPct, setProgressPct] = useState(0);
   const [err, setErr] = useState<string | null>(null);
   const [datesValidatedConfirmed, setDatesValidatedConfirmed] = useState(false);
+
+  const importFinalizeLock = useRef(false);
 
   const [manualDeadlineDate, setManualDeadlineDate] = useState("");
   const [manualDeadlineKind, setManualDeadlineKind] = useState<EventKind>(DEFAULT_CASE_EVENT_KIND);
@@ -233,6 +251,7 @@ export default function ImportAsoPage() {
 
   async function finalize() {
     if (!user?.id || !idToken || !caseId || !caseRecord) return;
+    if (importFinalizeLock.current) return;
     if (!datesValidatedConfirmed) {
       setErr("Confirm that the dates and details have been validated before importing.");
       return;
@@ -251,6 +270,7 @@ export default function ImportAsoPage() {
       setErr("Selected contacts must have the email/ID field filled on their contact.");
       return;
     }
+    importFinalizeLock.current = true;
     setBusy(true);
     setErr(null);
     setProgressPct(0);
@@ -268,13 +288,17 @@ export default function ImportAsoPage() {
       setProgressPct(15);
 
       setProgressMsg("Saving deadlines…");
-      const caseEvents = events.map((e) => ({ ...e, caseId, ownerId: user.id }));
+      let caseEvents = events.map((e) => ({ ...e, caseId, ownerId: user.id }));
+      const existingRows = await fetchEventsForCase(supabase, caseId);
+      caseEvents = mergeGoogleIdsFromDb(caseEvents, existingRows);
       await setEventsForCase(supabase, caseId, user.id, caseEvents);
-      setProgressPct(45);
+      setProgressPct(40);
 
       const displayName = caseDisplayName(caseRecord);
-      setProgressMsg("Syncing to Google Calendar…");
-      const batches = buildCalendarBatches(caseEvents);
+      const toCreate = caseEvents.filter(
+        (e) => e.included && !e.completed && !hasGoogleCalendarSync(e)
+      );
+      const batches = buildCalendarBatches(toCreate);
       const allContactIds = assignedContactIds;
       const attendeeEmails = Array.from(
         new Set(
@@ -283,57 +307,64 @@ export default function ImportAsoPage() {
             .filter((e): e is string => Boolean(e))
         )
       );
-      const calRes = await fetch("/api/calendar/sync", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({
-          action: "create",
-          caseName: displayName,
-          sourceLabel: file?.name ?? "Document with dates",
-          events: batches.map((b) => ({
-            title: b.title,
-            date: b.date,
-            description: b.description,
-            reminderMinutes: b.reminderMinutes,
-            ...(b.scheduleKind ? { scheduleKind: b.scheduleKind } : {}),
-            ...(b.startDateTime ? { startDateTime: b.startDateTime } : {}),
-            ...(b.endDateTime ? { endDateTime: b.endDateTime } : {}),
-            ...(b.location ? { location: b.location } : {}),
-            ...(typeof b.googleColorId !== "undefined" ? { googleColorId: b.googleColorId } : {}),
-            ...(typeof b.deadlineEndDate !== "undefined" ? { deadlineEndDate: b.deadlineEndDate } : {}),
-          })),
-          attendeeEmails,
-        }),
-      });
-      setProgressPct(75);
 
-      const calJson = (await calRes.json()) as {
-        googleEventIds?: string[];
-        googleEventIdMaps?: Record<string, string>[];
-        error?: string;
-      };
-      if (!calRes.ok) throw new Error(calJson.error ?? "Google Calendar create failed");
-      const googleEventIds = calJson.googleEventIds ?? [];
-      const googleEventIdMaps = calJson.googleEventIdMaps ?? [];
       let withGoogle: CalendarEvent[] = caseEvents.map((e) => ({ ...e }));
-      for (let i = 0; i < batches.length; i++) {
-        const ge = googleEventIds[i];
-        const map = googleEventIdMaps[i];
-        if (!ge) continue;
-        for (const eid of batches[i].sourceEventIds) {
-          withGoogle = withGoogle.map((ev) =>
-            ev.id === eid
-              ? {
-                  ...ev,
-                  googleEventId: ge,
-                  ...(map && Object.keys(map).length ? { googleCalendarEventIdsByEmail: map } : {}),
-                }
-              : ev
-          );
+
+      if (batches.length > 0) {
+        setProgressMsg("Syncing to Google Calendar…");
+        const calRes = await fetch("/api/calendar/sync", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({
+            action: "create",
+            caseName: displayName,
+            sourceLabel: file?.name ?? "Document with dates",
+            events: batches.map((b) => ({
+              title: b.title,
+              date: b.date,
+              description: b.description,
+              reminderMinutes: b.reminderMinutes,
+              ...(b.scheduleKind ? { scheduleKind: b.scheduleKind } : {}),
+              ...(b.startDateTime ? { startDateTime: b.startDateTime } : {}),
+              ...(b.endDateTime ? { endDateTime: b.endDateTime } : {}),
+              ...(b.location ? { location: b.location } : {}),
+              ...(typeof b.googleColorId !== "undefined" ? { googleColorId: b.googleColorId } : {}),
+              ...(typeof b.deadlineEndDate !== "undefined" ? { deadlineEndDate: b.deadlineEndDate } : {}),
+            })),
+            attendeeEmails,
+          }),
+        });
+        setProgressPct(70);
+
+        const calJson = (await calRes.json()) as {
+          googleEventIds?: string[];
+          googleEventIdMaps?: Record<string, string>[];
+          error?: string;
+        };
+        if (!calRes.ok) throw new Error(calJson.error ?? "Google Calendar create failed");
+        const googleEventIds = calJson.googleEventIds ?? [];
+        const googleEventIdMaps = calJson.googleEventIdMaps ?? [];
+        for (let i = 0; i < batches.length; i++) {
+          const ge = googleEventIds[i];
+          const map = googleEventIdMaps[i];
+          if (!ge) continue;
+          for (const eid of batches[i].sourceEventIds) {
+            withGoogle = withGoogle.map((ev) =>
+              ev.id === eid
+                ? {
+                    ...ev,
+                    googleEventId: ge,
+                    ...(map && Object.keys(map).length ? { googleCalendarEventIdsByEmail: map } : {}),
+                  }
+                : ev
+            );
+          }
         }
+      } else {
+        setProgressMsg("Calendar up to date — skipping new Google creates…");
       }
 
       setProgressMsg("Finalizing…");
@@ -350,10 +381,16 @@ export default function ImportAsoPage() {
       setProgressMsg("Done! Redirecting…");
       router.push(`/cases/${caseId}`);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Could not import deadlines");
+      let msg = e instanceof Error ? e.message : "Could not import deadlines";
+      if (msg === "Failed to fetch") {
+        msg =
+          "Network error or timeout while saving or syncing. Check the case page before trying again—if events already synced, repeating Import can duplicate Google Calendar rows. Wait a minute, refresh the case, then only retry if rows are still missing.";
+      }
+      setErr(msg);
       setProgressMsg(null);
       setProgressPct(0);
     } finally {
+      importFinalizeLock.current = false;
       setBusy(false);
     }
   }
@@ -872,6 +909,13 @@ export default function ImportAsoPage() {
             {!busy && (
               <>
                 <div className="mt-8 rounded-lg border border-border bg-surface-alt/60 px-4 py-3">
+                  <p className="text-xs text-text-muted">
+                    If this step errors or your browser says &quot;Failed to fetch,&quot; open the case first and
+                    confirm whether deadlines already appear with &quot;Synced.&quot; Re-running import creates new
+                    Google rows only for events that are not synced yet.
+                  </p>
+                </div>
+                <div className="mt-4 rounded-lg border border-border bg-surface-alt/60 px-4 py-3">
                   <label className="flex cursor-pointer items-start gap-3 text-sm text-text">
                     <input
                       type="checkbox"
@@ -891,7 +935,7 @@ export default function ImportAsoPage() {
                 </div>
                 <div className="mt-6 flex gap-3">
                   <Button variant="secondary" onClick={() => setStep(2)}>Back</Button>
-                  <Button disabled={!datesValidatedConfirmed} onClick={() => void finalize()}>
+                  <Button disabled={!datesValidatedConfirmed || busy} onClick={() => void finalize()}>
                     Import &amp; Sync to Calendar
                   </Button>
                 </div>
