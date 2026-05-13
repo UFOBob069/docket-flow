@@ -27,6 +27,15 @@ function formatSupabaseWriteError(context: string, err: { message?: string; deta
   return err.code ? `${context} (${err.code}): ${base}` : `${context}: ${base}`;
 }
 
+function normalizeDeadlineEndForDb(startYmd: string, raw: string | null | undefined): string | null {
+  if (raw == null || String(raw).trim() === "") return null;
+  const e = String(raw).trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(e)) return null;
+  if (e < startYmd) return null;
+  if (e === startYmd) return null;
+  return e;
+}
+
 /** Coerce app state → DB-safe row (avoids PostgREST 400s from null NOT NULL, bad arrays, invalid uuid[]). */
 function eventToRow(ev: CalendarEvent, ownerId: string): Record<string, unknown> {
   const now = Date.now();
@@ -54,6 +63,7 @@ function eventToRow(ev: CalendarEvent, ownerId: string): Record<string, unknown>
     event_kind: ev.eventKind ?? null,
     start_date_time: ev.startDateTime ?? null,
     end_date_time: ev.endDateTime ?? null,
+    deadline_end_date: normalizeDeadlineEndForDb(ev.date, ev.deadlineEndDate ?? undefined),
     deponent_or_subject: ev.deponentOrSubject ?? null,
     external_attendees_text: ev.externalAttendeesText ?? null,
     extra_internal_contact_ids: extraIds.length ? extraIds : null,
@@ -106,6 +116,10 @@ function eventFromRow(r: Record<string, unknown>): CalendarEvent {
   const gc = normalizeGoogleCalendarInviteColorId(
     (r.google_color_id as string | null | undefined) ?? undefined
   );
+  const startYmd = r.date as string;
+  const rawEnd = (r.deadline_end_date as string | null | undefined)?.trim()?.slice(0, 10);
+  const deadlineEnd =
+    rawEnd && /^\d{4}-\d{2}-\d{2}$/.test(rawEnd) && rawEnd > startYmd ? rawEnd : undefined;
   return {
     id: r.id as string,
     caseId: r.case_id as string,
@@ -118,6 +132,7 @@ function eventFromRow(r: Record<string, unknown>): CalendarEvent {
     eventKind: (r.event_kind as EventKind) ?? undefined,
     startDateTime: (r.start_date_time as string) ?? null,
     endDateTime: (r.end_date_time as string) ?? null,
+    ...(deadlineEnd ? { deadlineEndDate: deadlineEnd } : {}),
     deponentOrSubject: (r.deponent_or_subject as string) ?? null,
     externalAttendeesText: (r.external_attendees_text as string) ?? null,
     extraInternalContactIds: (r.extra_internal_contact_ids as string[]) ?? undefined,
@@ -391,37 +406,61 @@ function caseCalendarMetaFromRow(r: Record<string, unknown>): CaseCalendarMeta {
   };
 }
 
-/** Events whose calendar `date` falls in [startDate, endDate] (inclusive), with parent case row. */
-/** Firm-wide events in a date window (`userId` unused; kept for API stability). */
+/** Events whose span overlaps [startDate, endDate] (inclusive), with parent case row. */
 export async function fetchEventsInDateRange(
   supabase: SupabaseClient,
   _userId: string,
   startDate: string,
   endDate: string
 ): Promise<EventWithCaseRow[]> {
+  const select = "*, cases (id, name, client_name, assigned_contact_ids, status)";
+  const seen = new Set<string>();
   const acc: EventWithCaseRow[] = [];
-  let from = 0;
-  for (;;) {
-    const { data, error } = await supabase
-      .from("case_events")
-      .select("*, cases (id, name, client_name, assigned_contact_ids, status)")
-      .gte("date", startDate)
-      .lte("date", endDate)
-      .order("date", { ascending: true })
-      .order("id", { ascending: true })
-      .range(from, from + POSTGREST_PAGE_SIZE - 1);
-    if (error) throw error;
-    const page = data ?? [];
+
+  const pushPage = (page: Record<string, unknown>[]) => {
     for (const raw of page) {
       const row = raw as Record<string, unknown>;
+      const id = row.id as string;
+      if (seen.has(id)) continue;
+      seen.add(id);
       const nested = row.cases as Record<string, unknown> | Record<string, unknown>[] | null | undefined;
       const cRow = Array.isArray(nested) ? nested[0] : nested;
       if (!cRow) continue;
       acc.push({ event: eventFromRow(row), case: caseCalendarMetaFromRow(cRow) });
     }
-    if (page.length < POSTGREST_PAGE_SIZE) break;
-    from += POSTGREST_PAGE_SIZE;
+  };
+
+  for (const base of [
+    () =>
+      supabase.from("case_events").select(select).gte("date", startDate).lte("date", endDate),
+    () =>
+      supabase
+        .from("case_events")
+        .select(select)
+        .not("deadline_end_date", "is", null)
+        .lt("date", startDate)
+        .gte("deadline_end_date", startDate)
+        .lte("date", endDate),
+  ]) {
+    let from = 0;
+    for (;;) {
+      const { data, error } = await base()
+        .order("date", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, from + POSTGREST_PAGE_SIZE - 1);
+      if (error) throw error;
+      const page = (data ?? []) as Record<string, unknown>[];
+      pushPage(page);
+      if (page.length < POSTGREST_PAGE_SIZE) break;
+      from += POSTGREST_PAGE_SIZE;
+    }
   }
+
+  acc.sort((a, b) => {
+    const d = a.event.date.localeCompare(b.event.date);
+    if (d !== 0) return d;
+    return a.event.id.localeCompare(b.event.id);
+  });
   return acc;
 }
 
@@ -757,9 +796,10 @@ export async function bulkRescheduleEvents(
   eventIds: string[],
   shiftDays: number
 ): Promise<void> {
+  if (!eventIds.length) return;
   const { data: rows, error: fetchErr } = await supabase
     .from("case_events")
-    .select("id,date")
+    .select("id,date,deadline_end_date")
     .eq("case_id", caseId)
     .in("id", eventIds);
   if (fetchErr) throw fetchErr;
@@ -768,9 +808,17 @@ export async function bulkRescheduleEvents(
     const oldDate = new Date(`${r.date as string}T00:00:00`);
     oldDate.setDate(oldDate.getDate() + shiftDays);
     const newDate = oldDate.toISOString().slice(0, 10);
+    let newDeadline: string | null = null;
+    const de = r.deadline_end_date as string | null | undefined;
+    if (de && String(de).trim()) {
+      const oldEnd = new Date(`${String(de).trim().slice(0, 10)}T00:00:00`);
+      oldEnd.setDate(oldEnd.getDate() + shiftDays);
+      newDeadline = oldEnd.toISOString().slice(0, 10);
+    }
+    if (newDeadline && newDeadline <= newDate) newDeadline = null;
     const { error } = await supabase
       .from("case_events")
-      .update({ date: newDate, updated_at: now })
+      .update({ date: newDate, deadline_end_date: newDeadline, updated_at: now })
       .eq("id", r.id)
       .eq("case_id", caseId);
     if (error) throw error;

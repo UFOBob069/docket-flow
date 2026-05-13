@@ -135,6 +135,8 @@ export function createAdHocCalendarEvent(
     scheduleKind?: EventScheduleKind;
     createdByEmail?: string | null;
     googleColorId?: string | null;
+    /** Inclusive last calendar day for multi-day all-day deadline (requires no startTime). */
+    deadlineEndDate?: string | null;
   }
 ): CalendarEvent {
   const category = opts.category ?? categoryForManualEventKind(opts.eventKind);
@@ -143,6 +145,11 @@ export function createAdHocCalendarEvent(
   const gc = normalizeGoogleCalendarInviteColorId(opts.googleColorId ?? undefined);
   const colorPatch =
     gc != null ? { googleColorId: gc } : opts.googleColorId === null ? { googleColorId: null } : {};
+  const endYmd = opts.deadlineEndDate?.trim().slice(0, 10);
+  const spanPatch =
+    !opts.startTime && endYmd && /^\d{4}-\d{2}-\d{2}$/.test(endYmd) && endYmd > opts.eventDate
+      ? { deadlineEndDate: endYmd }
+      : {};
   const common = {
     title: opts.title.trim(),
     description: opts.description.trim(),
@@ -155,6 +162,7 @@ export function createAdHocCalendarEvent(
     remindersMinutes: [...opts.remindersMinutes],
     ...(email ? { createdByEmail: email } : {}),
     ...colorPatch,
+    ...spanPatch,
   };
   if (opts.startTime) {
     const startIso = localDateTimePartsToIso(opts.eventDate, opts.startTime);

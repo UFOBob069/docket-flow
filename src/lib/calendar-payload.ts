@@ -5,12 +5,15 @@ import { normalizeGoogleCalendarInviteColorId } from "./google-calendar-invite-c
 export function googleCalendarDescription(
   ev: Pick<
     CalendarEvent,
-    "description" | "deponentOrSubject" | "externalAttendeesText" | "zoomLink" | "scheduleKind"
+    "description" | "deponentOrSubject" | "externalAttendeesText" | "zoomLink" | "scheduleKind" | "deadlineEndDate" | "date" | "startDateTime"
   >
 ): string {
   const parts: string[] = [];
   if (ev.scheduleKind === "meeting") {
     parts.push("Internal meeting (time-based)");
+  }
+  if (!ev.startDateTime && ev.deadlineEndDate && ev.deadlineEndDate.trim() > (ev.date ?? "").trim()) {
+    parts.push(`Multi-day deadline through ${ev.deadlineEndDate.trim()} (inclusive).`);
   }
   if (ev.description?.trim()) parts.push(ev.description.trim());
   if (ev.deponentOrSubject?.trim()) parts.push(`Deponent / subject: ${ev.deponentOrSubject.trim()}`);
@@ -26,6 +29,8 @@ export type CreateCalendarEventInput = {
   reminderMinutes?: number[];
   startDateTime?: string;
   endDateTime?: string;
+  /** Inclusive last day for multi-day all-day deadlines. */
+  deadlineEndDate?: string | null;
   /** Shown in Google Calendar as Location (good for Zoom URLs on mobile). */
   location?: string;
   scheduleKind?: EventScheduleKind;
@@ -51,6 +56,7 @@ export function buildCalendarBatches(events: CalendarEvent[]): CalendarBatchItem
         scheduleKind: e.scheduleKind,
         ...(e.startDateTime ? { startDateTime: e.startDateTime } : {}),
         ...(e.endDateTime ? { endDateTime: e.endDateTime } : {}),
+        ...(e.deadlineEndDate && !e.startDateTime ? { deadlineEndDate: e.deadlineEndDate } : {}),
         ...(e.zoomLink?.trim() ? { location: e.zoomLink.trim() } : {}),
         ...(gc != null ? { googleColorId: gc } : e.googleColorId === null ? { googleColorId: null } : {}),
         sourceEventIds: [e.id],

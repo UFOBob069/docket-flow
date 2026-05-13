@@ -149,6 +149,11 @@ export interface CalendarEvent {
   /** Timed events (depositions, calls, etc.) — ISO datetime */
   startDateTime?: string | null;
   endDateTime?: string | null;
+  /**
+   * All-day deadline span: last calendar day (YYYY-MM-DD), inclusive.
+   * Only when there is no `startDateTime`. Omit or equal to `date` for a single-day deadline.
+   */
+  deadlineEndDate?: string | null;
   /** Deposition: who is being deposed; other kinds: short subject label */
   deponentOrSubject?: string | null;
   /** Free text for external attendees / parties */

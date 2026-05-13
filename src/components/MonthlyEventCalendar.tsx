@@ -148,7 +148,7 @@ export function MonthlyEventCalendar({
               </div>
               <ul className="space-y-1">
                 {dayChips.map((ch) => (
-                  <li key={ch.id}>
+                  <li key={`${iso}-${ch.id}`}>
                     {ch.selectable && ch.onToggleSelect ? (
                       <div
                         className={`flex items-start gap-1 rounded border px-0.5 py-0.5 hover:bg-surface-alt ${

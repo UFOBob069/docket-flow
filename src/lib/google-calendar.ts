@@ -1,4 +1,5 @@
 import { google } from "googleapis";
+import { addDays, format, parseISO } from "date-fns";
 import { normalizeGoogleCalendarInviteColorId } from "@/lib/google-calendar-invite-colors";
 
 const MAX_REMINDER_MIN = 40320;
@@ -194,12 +195,22 @@ function buildOverrides(minutes: number[]) {
 
 const DEFAULT_TZ = "America/Chicago";
 
+/** Inclusive last calendar day for all-day Google payload (defaults to start). */
+function resolvedAllDayLastInclusive(startYmd: string, deadlineEndYmd?: string | null): string {
+  const day = startYmd.trim().slice(0, 10);
+  const raw = deadlineEndYmd?.trim().slice(0, 10);
+  if (!raw || raw.length !== 10 || raw < day) return day;
+  return raw;
+}
+
 type EventPayload = {
   summary: string;
   description: string;
   reminderMinutes: number[];
   /** All-day (YYYY-MM-DD) — omit when using timed */
   dateIso?: string;
+  /** Inclusive last day for multi-day all-day; omit = single day (`dateIso` only). */
+  allDayLastInclusive?: string;
   startDateTime?: string;
   endDateTime?: string;
   /** Zoom / meet link — surfaces prominently in Google Calendar */
@@ -236,11 +247,14 @@ function buildInsertRequestBody(params: EventPayload): Record<string, unknown> {
     };
   }
   const day = params.dateIso ?? params.startDateTime?.slice(0, 10) ?? "";
+  const lastRaw = (params.allDayLastInclusive ?? day).trim() || day;
+  const lastInclusive = lastRaw < day ? day : lastRaw;
+  const endExclusive = format(addDays(parseISO(lastInclusive), 1), "yyyy-MM-dd");
   return {
     summary: params.summary,
     description: params.description,
     start: { date: day },
-    end: { date: day },
+    end: { date: endExclusive },
     reminders: { useDefault: false, overrides },
     ...(params.location?.trim() ? { location: params.location.trim() } : {}),
     ...(params.colorId ? { colorId: params.colorId } : {}),
@@ -306,6 +320,7 @@ function buildPatchBody(params: {
   summary?: string;
   description?: string;
   dateIso?: string;
+  allDayLastInclusive?: string;
   startDateTime?: string;
   endDateTime?: string;
   reminderMinutes?: number[];
@@ -329,8 +344,11 @@ function buildPatchBody(params: {
     body.start = { dateTime: params.startDateTime, timeZone: tz };
     body.end = { dateTime: end, timeZone: tz };
   } else if (params.dateIso !== undefined) {
-    body.start = { date: params.dateIso };
-    body.end = { date: params.dateIso };
+    const day = params.dateIso;
+    const lastRaw = (params.allDayLastInclusive ?? day).trim() || day;
+    const lastInclusive = lastRaw < day ? day : lastRaw;
+    body.start = { date: day };
+    body.end = { date: format(addDays(parseISO(lastInclusive), 1), "yyyy-MM-dd") };
   }
   if (params.reminderMinutes?.length) {
     body.reminders = {
@@ -383,6 +401,8 @@ export async function insertGoogleEvent(params: {
   reminderMinutes: number[];
   startDateTime?: string | null;
   endDateTime?: string | null;
+  /** Inclusive last day for multi-day all-day deadlines (ignored when timed). */
+  deadlineEndDate?: string | null;
   location?: string | null;
   scheduleKind?: "deadline" | "meeting";
   /** Google Calendar event palette id (optional). */
@@ -398,6 +418,9 @@ export async function insertGoogleEvent(params: {
     endDateTime: params.endDateTime ?? undefined,
     location: params.location?.trim() || undefined,
     ...(cid ? { colorId: cid } : {}),
+    ...(!params.startDateTime
+      ? { allDayLastInclusive: resolvedAllDayLastInclusive(params.dateIso, params.deadlineEndDate) }
+      : {}),
   };
 
   if (params.scheduleKind === "meeting") {
@@ -453,6 +476,8 @@ export async function patchGoogleEvent(params: {
   summary?: string;
   description?: string;
   dateIso?: string;
+  /** Inclusive last day for multi-day all-day (ignored when timed). */
+  deadlineEndDate?: string | null;
   startDateTime?: string;
   endDateTime?: string;
   reminderMinutes?: number[];
@@ -465,6 +490,10 @@ export async function patchGoogleEvent(params: {
     summary: params.summary,
     description: params.description,
     dateIso: params.dateIso,
+    allDayLastInclusive:
+      params.startDateTime || params.dateIso === undefined
+        ? undefined
+        : resolvedAllDayLastInclusive(params.dateIso, params.deadlineEndDate),
     startDateTime: params.startDateTime,
     endDateTime: params.endDateTime,
     reminderMinutes: params.reminderMinutes,
@@ -549,6 +578,8 @@ export async function reconcileCalendarEventTeam(params: {
   attendeeEmails: string[];
   startDateTime?: string;
   endDateTime?: string;
+  /** Inclusive last day for multi-day all-day (ignored when timed). */
+  deadlineEndDate?: string | null;
   location?: string | null;
   googleColorId?: string | null;
   /** Prior map (may be partial for legacy events) */
@@ -622,6 +653,9 @@ export async function reconcileCalendarEventTeam(params: {
     endDateTime: params.endDateTime,
     location: params.location?.trim() || undefined,
     ...(cid ? { colorId: cid } : {}),
+    ...(!params.startDateTime
+      ? { allDayLastInclusive: resolvedAllDayLastInclusive(params.dateIso, params.deadlineEndDate) }
+      : {}),
   };
 
   for (const el of [...Object.keys(oldMap)]) {

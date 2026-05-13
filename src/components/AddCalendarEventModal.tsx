@@ -91,6 +91,7 @@ export function AddCalendarEventModal({
   const [addTitle, setAddTitle] = useState("");
   const [addDeponent, setAddDeponent] = useState("");
   const [addEventDate, setAddEventDate] = useState("");
+  const [addDeadlineEndDate, setAddDeadlineEndDate] = useState("");
   const [addStartTime, setAddStartTime] = useState("");
   const [addEndTime, setAddEndTime] = useState("");
   const [addZoom, setAddZoom] = useState("");
@@ -128,6 +129,7 @@ export function AddCalendarEventModal({
     setAddTitle("");
     setAddDeponent("");
     setAddEventDate(date);
+    setAddDeadlineEndDate("");
     /** All-day by default (day row at top of calendar); user can set start/end times if needed. */
     setAddStartTime("");
     setAddEndTime("");
@@ -198,6 +200,15 @@ export function AddCalendarEventModal({
     }
     if (addEndTime && !addStartTime) {
       setMsg("Set a start time before an end time — both are on the same day as the event.");
+      return;
+    }
+    if (
+      scheduleKind === "deadline" &&
+      !addStartTime &&
+      addDeadlineEndDate.trim() &&
+      addDeadlineEndDate.trim() <= addEventDate.trim()
+    ) {
+      setMsg("Last day of deadline must be after the event start date, or leave it blank for a single day.");
       return;
     }
     if (addStartTime && addEndTime && !isEndTimeAfterStartTime(addStartTime, addEndTime)) {
@@ -282,6 +293,10 @@ export function AddCalendarEventModal({
         scheduleKind,
         createdByEmail: user.email?.trim() ?? null,
         googleColorId: addGoogleColorId,
+        deadlineEndDate:
+          scheduleKind === "deadline" && !addStartTime && addDeadlineEndDate.trim() > addEventDate.trim()
+            ? addDeadlineEndDate.trim().slice(0, 10)
+            : null,
       });
 
       await saveEvent(supabase, caseId, draft);
@@ -308,6 +323,9 @@ export function AddCalendarEventModal({
                 : draft.googleColorId === null
                   ? { googleColorId: null }
                   : {}),
+              ...(!draft.startDateTime && draft.deadlineEndDate
+                ? { deadlineEndDate: draft.deadlineEndDate }
+                : {}),
             },
           ],
           attendeeEmails: attendeeEmailsForSync,
@@ -592,6 +610,7 @@ export function AddCalendarEventModal({
                     type="button"
                     onClick={() => {
                       setScheduleKind("meeting");
+                      setAddDeadlineEndDate("");
                       setAddStartTime((s) => s || "09:00");
                       setAddEndTime((e) => e || "10:00");
                     }}
@@ -665,6 +684,22 @@ export function AddCalendarEventModal({
                   )}
                 </p>
               </div>
+              {scheduleKind === "deadline" && !addStartTime && (
+                <div>
+                  <Label>Last day of deadline (optional)</Label>
+                  <Input
+                    type="date"
+                    className="mt-1.5"
+                    min={addEventDate || undefined}
+                    value={addDeadlineEndDate}
+                    onChange={(e) => setAddDeadlineEndDate(e.target.value)}
+                  />
+                  <p className="mt-1 text-xs text-text-dim">
+                    Blank = single calendar day. Otherwise the last day of the span (inclusive); Google shows one
+                    all-day block across those dates.
+                  </p>
+                </div>
+              )}
               {scheduleKind === "meeting" && (
                 <div className="rounded-lg border border-border bg-primary-light/20 px-3 py-3">
                   <Label>Meeting length (minutes)</Label>
@@ -740,6 +775,7 @@ export function AddCalendarEventModal({
                 value={addStartTime}
                 onChange={(t) => {
                   setAddStartTime(t);
+                  if (t) setAddDeadlineEndDate("");
                   if (!t) setAddEndTime("");
                 }}
                 allowNoTime={scheduleKind !== "meeting"}

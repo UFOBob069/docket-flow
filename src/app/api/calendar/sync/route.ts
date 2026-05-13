@@ -29,6 +29,8 @@ type CreateBody = {
     scheduleKind?: "deadline" | "meeting";
     /** Google Calendar `colorId` (Peacock, Lavender, …). */
     googleColorId?: string | null;
+    /** Inclusive last calendar day for multi-day all-day deadlines. */
+    deadlineEndDate?: string | null;
   }[];
   attendeeEmails: string[];
 };
@@ -49,6 +51,8 @@ type PatchBody = {
   location?: string | null;
   scheduleKind?: "deadline" | "meeting";
   googleColorId?: string | null;
+  /** Inclusive last calendar day for multi-day all-day deadlines. */
+  deadlineEndDate?: string | null;
 };
 
 type DeleteBody = {
@@ -86,6 +90,7 @@ type ReconcileBody = {
     googleCalendarEventIdsByEmail?: Record<string, string>;
     scheduleKind?: "deadline" | "meeting";
     googleColorId?: string | null;
+    deadlineEndDate?: string | null;
   }[];
 };
 
@@ -137,6 +142,7 @@ export async function POST(req: Request): Promise<Response> {
           summary,
           description: body.description,
           dateIso: body.startDateTime ? undefined : body.date,
+          deadlineEndDate: body.startDateTime ? undefined : body.deadlineEndDate,
           startDateTime: body.startDateTime,
           endDateTime: body.endDateTime,
           reminderMinutes: body.reminderMinutes ?? [20160, 10080, 1440],
@@ -168,6 +174,7 @@ export async function POST(req: Request): Promise<Response> {
           reminderMinutes: ev.reminderMinutes ?? [20160, 10080, 1440],
           startDateTime: ev.startDateTime,
           endDateTime: ev.endDateTime,
+          deadlineEndDate: ev.deadlineEndDate,
           location: ev.location,
           googleColorId: ev.googleColorId,
           attendeeEmails,
@@ -243,6 +250,7 @@ export async function POST(req: Request): Promise<Response> {
           location: ev.location,
           scheduleKind: ev.scheduleKind ?? "deadline",
           googleColorId: ev.googleColorId,
+          deadlineEndDate: ev.deadlineEndDate,
         });
         googleEventIds.push(organizerEventId);
         googleEventIdMaps.push(idsByEmail);

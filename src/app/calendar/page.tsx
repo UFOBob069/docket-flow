@@ -69,6 +69,13 @@ function formatWhen(e: CalendarEvent): string {
       /* fall through */
     }
   }
+  if (!e.startDateTime && e.deadlineEndDate && e.deadlineEndDate.trim() > e.date) {
+    try {
+      return `${format(parseISO(e.date), "EEE, MMM d")} – ${format(parseISO(e.deadlineEndDate), "EEE, MMM d, yyyy")}`;
+    } catch {
+      /* fall through */
+    }
+  }
   return format(parseISO(e.date), "EEEE, MMM d, yyyy");
 }
 

@@ -16,6 +16,7 @@ import {
 import { caseMatchesAssignedRole } from "@/lib/case-assigned-filter";
 import { EVENT_KIND_FILTER_OPTIONS } from "@/lib/one-off-events";
 import type { ActivityEntry, CalendarEvent, Case, Contact, EventKind } from "@/lib/types";
+import { deadlineInclusiveEndDate } from "@/lib/event-date-range";
 import { AddCalendarEventModal } from "@/components/AddCalendarEventModal";
 import { FilterMultiSelect } from "@/components/FilterMultiSelect";
 import { PageSkeleton } from "@/components/PageSkeleton";
@@ -60,6 +61,15 @@ function classify(dateStr: string, today: string): Urgency | null {
   return null;
 }
 
+/** Urgency bucket using multi-day deadline end for overdue / “today” when the span covers today. */
+function dashboardUrgency(e: CalendarEvent, today: string): Urgency | null {
+  if (e.startDateTime) return classify(e.date, today);
+  const last = deadlineInclusiveEndDate(e);
+  if (last < today) return "overdue";
+  if (e.date <= today && last >= today) return "today";
+  return classify(e.date, today);
+}
+
 const sectionConfig: Record<Urgency, { title: string; dot: string; badgeVariant: "danger" | "pink" | "warning" | "primary" | "default"; border: string }> = {
   overdue:   { title: "Overdue",         dot: "bg-danger",      badgeVariant: "danger",  border: "border-danger/30 bg-danger/[0.03]" },
   today:     { title: "Today",           dot: "bg-pink",        badgeVariant: "pink",    border: "border-pink/30" },
@@ -81,7 +91,8 @@ function DeadlineSection({ rows, urgency }: { rows: Row[]; urgency: Urgency }) {
         </div>
         <ul className="space-y-0.5">
           {rows.map(({ case: c, event: e }) => {
-            const days = differenceInCalendarDays(parseISO(e.date), parseISO(todayIso()));
+            const last = deadlineInclusiveEndDate(e);
+            const days = differenceInCalendarDays(parseISO(last), parseISO(todayIso()));
             const label = days === 0 ? "Today" : days === 1 ? "Tomorrow" : days < 0 ? `${Math.abs(days)}d overdue` : `${days}d`;
             return (
               <li key={`${c.id}-${e.id}`}>
@@ -100,7 +111,9 @@ function DeadlineSection({ rows, urgency }: { rows: Row[]; urgency: Urgency }) {
                       {label}
                     </span>
                     <span className="text-xs tabular-nums text-text-dim">
-                      {format(parseISO(e.date), "MMM d")}
+                      {e.deadlineEndDate && e.deadlineEndDate > e.date && !e.startDateTime
+                        ? `${format(parseISO(e.date), "MMM d")}–${format(parseISO(e.deadlineEndDate), "MMM d")}`
+                        : format(parseISO(e.date), "MMM d")}
                     </span>
                   </div>
                 </Link>
@@ -216,7 +229,7 @@ export default function DashboardPage() {
         for (const e of events) {
           if (e.completed) continue;
           totalDeadlines++;
-          if (classify(e.date, t)) flat.push({ case: c, event: e });
+          if (dashboardUrgency(e, t)) flat.push({ case: c, event: e });
         }
       }
       flat.sort((a, b) => a.event.date.localeCompare(b.event.date));
@@ -309,8 +322,10 @@ export default function DashboardPage() {
       ) {
         return false;
       }
-      const isOverdue = classify(e.date, today) === "overdue";
-      if (!isOverdue && (e.date < timelineStart || e.date > timelineEnd)) return false;
+      const last = deadlineInclusiveEndDate(e);
+      const isOverdue = last < today;
+      const overlapsTimeline = e.date <= timelineEnd && last >= timelineStart;
+      if (!isOverdue && !overlapsTimeline) return false;
       if (!q) return true;
       const hay = [e.title, e.description, c.name, c.clientName, e.deponentOrSubject ?? ""]
         .join("\n")
@@ -332,7 +347,7 @@ export default function DashboardPage() {
   const grouped = useMemo(() => {
     const buckets: Record<Urgency, Row[]> = { overdue: [], today: [], week: [], fortnight: [], quarter: [] };
     for (const r of filteredRows) {
-      const u = classify(r.event.date, today);
+      const u = dashboardUrgency(r.event, today);
       if (u) buckets[u].push(r);
     }
     return buckets;

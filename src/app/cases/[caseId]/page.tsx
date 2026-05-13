@@ -11,6 +11,12 @@ import { caseDisplayName } from "@/lib/case-display";
 import { googleCalendarDescription } from "@/lib/calendar-payload";
 import { postCalendarSync } from "@/lib/calendar-client";
 import { CALENDAR_TIMEZONE, defaultEndIso } from "@/lib/event-factory";
+import {
+  deadlineInclusiveEndDate,
+  eachYmdInInclusiveRange,
+  eventIntersectsMonth,
+  shiftCalendarDays,
+} from "@/lib/event-date-range";
 import { isGoogleIcsMirrorEvent } from "@/lib/calendar-event-origin";
 import { getFixedRemindersForKind, isTaxonomyEventKind } from "@/lib/case-event-kinds";
 import {
@@ -42,6 +48,7 @@ import type {
   EventScheduleKind,
 } from "@/lib/types";
 import { AddCalendarEventModal } from "@/components/AddCalendarEventModal";
+import type { MonthlyCalendarEventChip } from "@/components/MonthlyEventCalendar";
 import { FixedRemindersReadout } from "@/components/FixedRemindersReadout";
 import { MonthlyEventCalendar } from "@/components/MonthlyEventCalendar";
 import { PageSkeleton } from "@/components/PageSkeleton";
@@ -106,10 +113,11 @@ function todayYmd(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-/** Matches dashboard urgency: prior calendar day, not marked complete. */
+/** Prior calendar day of span end, not marked complete. */
 function isCalendarEventOverdue(ev: CalendarEvent): boolean {
   if (ev.completed) return false;
-  return differenceInCalendarDays(parseISO(ev.date), parseISO(todayYmd())) < 0;
+  const last = deadlineInclusiveEndDate(ev);
+  return differenceInCalendarDays(parseISO(last), parseISO(todayYmd())) < 0;
 }
 
 /** Delete body for `/api/calendar/sync` — SOL host rows use `googleHostCalendarId` instead of per-user copies */
@@ -228,7 +236,7 @@ export default function CaseDetailPage() {
   const [monthCursor, setMonthCursor] = useState(() => format(new Date(), "yyyy-MM"));
 
   const eventIdsInMonth = useMemo(
-    () => events.filter((e) => e.date.length >= 7 && e.date.slice(0, 7) === monthCursor).map((e) => e.id),
+    () => [...new Set(events.filter((e) => eventIntersectsMonth(e, monthCursor)).map((e) => e.id))],
     [events, monthCursor]
   );
   const allInMonthSelected =
@@ -358,13 +366,34 @@ export default function CaseDetailPage() {
     else setSelected(new Set(events.map((e) => e.id)));
   }
 
-  const caseMonthChips = useMemo(
-    () =>
-      events
-        .filter((e) => e.date.length >= 7 && e.date.slice(0, 7) === monthCursor)
-        .map((ev) => ({
+  const caseMonthChips = useMemo(() => {
+    const chips: MonthlyCalendarEventChip[] = [];
+    for (const ev of events) {
+      if (!eventIntersectsMonth(ev, monthCursor)) continue;
+      const overdue = isCalendarEventOverdue(ev);
+      if (ev.startDateTime) {
+        if (ev.date.length >= 7 && ev.date.slice(0, 7) === monthCursor) {
+          chips.push({
+            id: ev.id,
+            date: ev.date,
+            title: ev.title,
+            selectable: true as const,
+            selected: selected.has(ev.id),
+            onToggleSelect: () => toggleSelect(ev.id),
+            onOpen: () => setEditing(calendarEventForEdit(ev)),
+            dimmed: ev.noiseFlag,
+            completed: ev.completed,
+            overdue,
+          });
+        }
+        continue;
+      }
+      const endInc = deadlineInclusiveEndDate(ev);
+      for (const yd of eachYmdInInclusiveRange(ev.date, endInc)) {
+        if (yd.slice(0, 7) !== monthCursor) continue;
+        chips.push({
           id: ev.id,
-          date: ev.date,
+          date: yd,
           title: ev.title,
           selectable: true as const,
           selected: selected.has(ev.id),
@@ -372,10 +401,12 @@ export default function CaseDetailPage() {
           onOpen: () => setEditing(calendarEventForEdit(ev)),
           dimmed: ev.noiseFlag,
           completed: ev.completed,
-          overdue: isCalendarEventOverdue(ev),
-        })),
-    [events, monthCursor, selected]
-  );
+          overdue,
+        });
+      }
+    }
+    return chips;
+  }, [events, monthCursor, selected]);
 
   async function setStatus(status: CaseStatus) {
     if (!caseId || !c || !user) return;
@@ -596,9 +627,19 @@ export default function CaseDetailPage() {
         } else {
           endIso = defaultEndIso(startIso);
         }
-        updated = { ...updated, startDateTime: startIso, endDateTime: endIso };
+        updated = { ...updated, startDateTime: startIso, endDateTime: endIso, deadlineEndDate: null };
       } else {
         updated = { ...updated, startDateTime: null, endDateTime: null };
+        if (updated.deadlineEndDate?.trim()) {
+          const de = updated.deadlineEndDate.trim().slice(0, 10);
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(de) || de <= day) {
+            updated = { ...updated, deadlineEndDate: null };
+          } else {
+            updated = { ...updated, deadlineEndDate: de };
+          }
+        } else {
+          updated = { ...updated, deadlineEndDate: null };
+        }
         if (pickEndTime) {
           setMsg("Set a start time to use an end time, or clear end time for an all-day event.");
           setBusy(false);
@@ -634,6 +675,7 @@ export default function CaseDetailPage() {
           scheduleKind: updated.scheduleKind,
           ...(updated.startDateTime ? { startDateTime: updated.startDateTime } : {}),
           ...(updated.endDateTime ? { endDateTime: updated.endDateTime } : {}),
+          ...(!updated.startDateTime ? { deadlineEndDate: updated.deadlineEndDate ?? null } : {}),
           ...(updated.googleColorId !== undefined ? { googleColorId: updated.googleColorId } : {}),
         }, idToken);
         if (!res.ok) { const j = (await res.json()) as { error?: string }; throw new Error(j.error ?? "Calendar update failed"); }
@@ -688,9 +730,11 @@ export default function CaseDetailPage() {
       await bulkRescheduleEvents(supabase, caseId, [...selected], days);
       for (const ev of selectedEvents) {
         if (isGoogleIcsMirrorEvent(ev) || !ev.googleEventId) continue;
-        const d = new Date(`${ev.date}T12:00:00`);
-        d.setDate(d.getDate() + days);
-        const newDate = d.toISOString().slice(0, 10);
+        const newDate = shiftCalendarDays(ev.date, days);
+        const newDeadline =
+          !ev.startDateTime && ev.deadlineEndDate
+            ? shiftCalendarDays(ev.deadlineEndDate, days)
+            : undefined;
         const res = await postCalendarSync({
           action: "update",
           googleEventId: ev.googleEventId,
@@ -709,6 +753,7 @@ export default function CaseDetailPage() {
           scheduleKind: ev.scheduleKind,
           ...(ev.startDateTime ? { startDateTime: ev.startDateTime } : {}),
           ...(ev.endDateTime ? { endDateTime: ev.endDateTime } : {}),
+          ...(!ev.startDateTime ? { deadlineEndDate: newDeadline ?? null } : {}),
           ...(ev.googleColorId !== undefined ? { googleColorId: ev.googleColorId } : {}),
         }, idToken);
         if (!res.ok) {
@@ -768,6 +813,7 @@ export default function CaseDetailPage() {
               scheduleKind: ev.scheduleKind,
               ...(ev.startDateTime ? { startDateTime: ev.startDateTime } : {}),
               ...(ev.endDateTime ? { endDateTime: ev.endDateTime } : {}),
+              ...(!ev.startDateTime ? { deadlineEndDate: ev.deadlineEndDate ?? null } : {}),
               googleEventId: ev.googleEventId,
               googleCalendarEventIdsByEmail: ev.googleCalendarEventIdsByEmail,
               ...(ev.googleColorId !== undefined ? { googleColorId: ev.googleColorId } : {}),
@@ -1182,7 +1228,11 @@ export default function CaseDetailPage() {
                           overdue ? "text-danger" : "text-text"
                         }`}
                       >
-                        {ev.date}
+                        {ev.startDateTime
+                          ? ev.date
+                          : ev.deadlineEndDate && ev.deadlineEndDate > ev.date
+                            ? `${ev.date} → ${ev.deadlineEndDate}`
+                            : ev.date}
                       </span>
                       {ev.startDateTime && (
                         <span className="text-xs font-medium text-text-secondary">
@@ -1341,6 +1391,7 @@ export default function CaseDetailPage() {
                     setEditing({
                       ...editing,
                       scheduleKind: e.target.value as EventScheduleKind,
+                      ...(e.target.value === "meeting" ? { deadlineEndDate: null } : {}),
                     })
                   }
                 >
@@ -1378,6 +1429,27 @@ export default function CaseDetailPage() {
                   Times below apply only to this day.
                 </p>
               </div>
+              {(editing.scheduleKind ?? "deadline") === "deadline" && !pickStartTime && (
+                <div>
+                  <Label>Last day of deadline (optional)</Label>
+                  <Input
+                    type="date"
+                    className="mt-1.5"
+                    min={editing.date}
+                    value={editing.deadlineEndDate ?? ""}
+                    onChange={(e) =>
+                      setEditing({
+                        ...editing,
+                        deadlineEndDate: e.target.value.trim() || null,
+                      })
+                    }
+                  />
+                  <p className="mt-1 text-xs text-text-dim">
+                    Leave blank for a single-day deadline. Set to the last calendar day (inclusive) for a span across
+                    multiple days — Google Calendar shows one all-day block.
+                  </p>
+                </div>
+              )}
               <FiveMinuteTimeSelect
                 label="Start time (optional)"
                 value={pickStartTime}

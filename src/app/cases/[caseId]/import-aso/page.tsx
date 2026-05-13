@@ -260,6 +260,7 @@ export default function ImportAsoPage() {
             ...(b.endDateTime ? { endDateTime: b.endDateTime } : {}),
             ...(b.location ? { location: b.location } : {}),
             ...(typeof b.googleColorId !== "undefined" ? { googleColorId: b.googleColorId } : {}),
+            ...(typeof b.deadlineEndDate !== "undefined" ? { deadlineEndDate: b.deadlineEndDate } : {}),
           })),
           attendeeEmails,
         }),

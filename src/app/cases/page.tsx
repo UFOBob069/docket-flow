@@ -16,6 +16,7 @@ import {
 } from "@/lib/supabase/repo";
 import { EVENT_KIND_FILTER_OPTIONS } from "@/lib/one-off-events";
 import type { CalendarEvent, Case, Contact, EventKind } from "@/lib/types";
+import { deadlineInclusiveEndDate } from "@/lib/event-date-range";
 import { FilterMultiSelect } from "@/components/FilterMultiSelect";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { useHydrated } from "@/hooks/useHydrated";
@@ -45,7 +46,8 @@ function formatRangePill(start: string, end: string): string {
 }
 
 function eventInDateRange(ev: CalendarEvent, start: string, end: string): boolean {
-  return ev.date >= start && ev.date <= end;
+  const last = deadlineInclusiveEndDate(ev);
+  return ev.date <= end && last >= start;
 }
 
 function caseNumberSortKey(c: Case): number | null {
@@ -528,7 +530,11 @@ export default function CasesListPage() {
                   const evCount = evs.length;
                   const today = todayIso();
                   const overdueCount = evs.filter(
-                    (e) => e.included && !e.completed && !e.noiseFlag && e.date < today
+                    (e) =>
+                      e.included &&
+                      !e.completed &&
+                      !e.noiseFlag &&
+                      deadlineInclusiveEndDate(e) < today
                   ).length;
                   const isArchived = c.status === "archived";
                   return (
