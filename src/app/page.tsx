@@ -78,7 +78,15 @@ const sectionConfig: Record<Urgency, { title: string; dot: string; badgeVariant:
   quarter:   { title: "Coming Up",       dot: "bg-text-dim",    badgeVariant: "default", border: "border-border" },
 };
 
-function DeadlineSection({ rows, urgency }: { rows: Row[]; urgency: Urgency }) {
+function DeadlineSection({
+  rows,
+  urgency,
+  contactById,
+}: {
+  rows: Row[];
+  urgency: Urgency;
+  contactById: Map<string, Contact>;
+}) {
   if (!rows.length) return null;
   const cfg = sectionConfig[urgency];
   return (
@@ -94,6 +102,9 @@ function DeadlineSection({ rows, urgency }: { rows: Row[]; urgency: Urgency }) {
             const last = deadlineInclusiveEndDate(e);
             const days = differenceInCalendarDays(parseISO(last), parseISO(todayIso()));
             const label = days === 0 ? "Today" : days === 1 ? "Tomorrow" : days < 0 ? `${Math.abs(days)}d overdue` : `${days}d`;
+            const assign = c.assignedContactIds;
+            const att = assign[0] ? contactById.get(assign[0]) : undefined;
+            const par = assign[1] ? contactById.get(assign[1]) : undefined;
             return (
               <li key={`${c.id}-${e.id}`}>
                 <Link
@@ -105,6 +116,11 @@ function DeadlineSection({ rows, urgency }: { rows: Row[]; urgency: Urgency }) {
                       {e.title}
                     </p>
                     <p className="truncate text-xs text-text-muted">{c.name} · {c.clientName}</p>
+                    <p className="truncate text-xs text-text-muted">
+                      {att?.name ?? "—"}
+                      <span className="text-text-dim"> · </span>
+                      {par?.name ?? "—"}
+                    </p>
                   </div>
                   <div className="ml-4 flex shrink-0 items-center gap-2">
                     <span className={`text-xs font-semibold tabular-nums ${days < 0 ? "text-danger" : days <= 7 ? "text-warning" : "text-text-muted"}`}>
@@ -536,11 +552,11 @@ export default function DashboardPage() {
       {/* Deadline sections + activity sidebar */}
       <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_340px]">
         <div className="space-y-4">
-          <DeadlineSection rows={grouped.overdue} urgency="overdue" />
-          <DeadlineSection rows={grouped.today} urgency="today" />
-          <DeadlineSection rows={grouped.week} urgency="week" />
-          <DeadlineSection rows={grouped.fortnight} urgency="fortnight" />
-          <DeadlineSection rows={grouped.quarter} urgency="quarter" />
+          <DeadlineSection rows={grouped.overdue} urgency="overdue" contactById={contactById} />
+          <DeadlineSection rows={grouped.today} urgency="today" contactById={contactById} />
+          <DeadlineSection rows={grouped.week} urgency="week" contactById={contactById} />
+          <DeadlineSection rows={grouped.fortnight} urgency="fortnight" contactById={contactById} />
+          <DeadlineSection rows={grouped.quarter} urgency="quarter" contactById={contactById} />
 
           {!refreshing && filteredRows.length === 0 && !loadError && (
             <EmptyState
