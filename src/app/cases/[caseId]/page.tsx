@@ -231,8 +231,7 @@ export default function CaseDetailPage() {
 
   const [verifyBusy, setVerifyBusy] = useState(false);
   const [verifyResult, setVerifyResult] = useState<VerifyResponse | null>(null);
-  const [gapSyncBusy, setGapSyncBusy] = useState(false);
-  const gapSyncLock = useRef(false);
+  const [creatingGoogleInviteId, setCreatingGoogleInviteId] = useState<string | null>(null);
 
   const [showAddEvent, setShowAddEvent] = useState(false);
   const [eventViewMode, setEventViewMode] = useState<"timeline" | "month">("timeline");
@@ -252,18 +251,6 @@ export default function CaseDetailPage() {
 
   const sortedEvents = useMemo(
     () => [...events].sort(compareEventsBySchedule),
-    [events]
-  );
-
-  const unsyncedGoogleCount = useMemo(
-    () =>
-      events.filter(
-        (e) =>
-          !isGoogleIcsMirrorEvent(e) &&
-          !e.completed &&
-          e.included &&
-          !hasGoogleCalendarSync(e)
-      ).length,
     [events]
   );
 
@@ -351,31 +338,33 @@ export default function CaseDetailPage() {
     }
   }
 
-  async function syncMissingGoogleInvites() {
-    if (!caseId || !c || !user || !idToken || c.status !== "active") return;
-    if (gapSyncLock.current) return;
-    gapSyncLock.current = true;
-    setGapSyncBusy(true);
+  async function createGoogleInviteForEvent(sourceEv: CalendarEvent) {
+    if (!caseId || !c || c.status !== "active" || !user || !idToken) return;
+    if (creatingGoogleInviteId) return;
+    if (isGoogleIcsMirrorEvent(sourceEv) || sourceEv.completed || !sourceEv.included) return;
+
+    setCreatingGoogleInviteId(sourceEv.id);
     setMsg(null);
     try {
       const supabase = getBrowserSupabase();
       const fresh = await fetchEventsForCase(supabase, caseId);
-      const toCreate = fresh.filter(
-        (e) =>
-          !isGoogleIcsMirrorEvent(e) &&
-          !e.completed &&
-          e.included &&
-          !hasGoogleCalendarSync(e)
-      );
-      if (toCreate.length === 0) {
-        flash("All included deadlines already have Google Calendar invites.");
+      const latest = fresh.find((e) => e.id === sourceEv.id);
+      if (!latest) throw new Error("Event not found on this case.");
+      if (isGoogleIcsMirrorEvent(latest)) return;
+      if (latest.completed || !latest.included) {
+        setMsg("This deadline is completed or excluded; it cannot get a new Google invite.");
         return;
       }
-      const batches = buildCalendarBatches(toCreate);
+      if (hasGoogleCalendarSync(latest)) {
+        flash("This deadline already has a Google Calendar invite.");
+        return;
+      }
+      const batches = buildCalendarBatches([latest]);
       if (batches.length === 0) {
-        flash("Nothing to sync to Google Calendar.");
+        setMsg("This event cannot be synced (check included / completed state).");
         return;
       }
+      const b = batches[0];
       const assigned = c.assignedContactIds ?? [];
       const attendeeEmails = Array.from(
         new Set(
@@ -389,19 +378,21 @@ export default function CaseDetailPage() {
         {
           action: "create",
           caseName: displayName,
-          sourceLabel: "DocketFlow — catch-up sync",
-          events: batches.map((b) => ({
-            title: b.title,
-            date: b.date,
-            description: b.description,
-            reminderMinutes: b.reminderMinutes,
-            ...(b.scheduleKind ? { scheduleKind: b.scheduleKind } : {}),
-            ...(b.startDateTime ? { startDateTime: b.startDateTime } : {}),
-            ...(b.endDateTime ? { endDateTime: b.endDateTime } : {}),
-            ...(b.location ? { location: b.location } : {}),
-            ...(typeof b.googleColorId !== "undefined" ? { googleColorId: b.googleColorId } : {}),
-            ...(typeof b.deadlineEndDate !== "undefined" ? { deadlineEndDate: b.deadlineEndDate } : {}),
-          })),
+          sourceLabel: "DocketFlow",
+          events: [
+            {
+              title: b.title,
+              date: b.date,
+              description: b.description,
+              reminderMinutes: b.reminderMinutes,
+              ...(b.scheduleKind ? { scheduleKind: b.scheduleKind } : {}),
+              ...(b.startDateTime ? { startDateTime: b.startDateTime } : {}),
+              ...(b.endDateTime ? { endDateTime: b.endDateTime } : {}),
+              ...(b.location ? { location: b.location } : {}),
+              ...(typeof b.googleColorId !== "undefined" ? { googleColorId: b.googleColorId } : {}),
+              ...(typeof b.deadlineEndDate !== "undefined" ? { deadlineEndDate: b.deadlineEndDate } : {}),
+            },
+          ],
           attendeeEmails,
         },
         idToken
@@ -412,49 +403,41 @@ export default function CaseDetailPage() {
         error?: string;
       };
       if (!res.ok) throw new Error(calJson.error ?? "Google Calendar create failed");
-      const googleEventIds = calJson.googleEventIds ?? [];
-      const googleEventIdMaps = calJson.googleEventIdMaps ?? [];
-      let withGoogle = fresh.map((e) => ({ ...e }));
-      for (let i = 0; i < batches.length; i++) {
-        const ge = googleEventIds[i];
-        const map = googleEventIdMaps[i];
-        if (!ge) continue;
-        for (const eid of batches[i].sourceEventIds) {
-          withGoogle = withGoogle.map((ev) =>
-            ev.id === eid
-              ? {
-                  ...ev,
-                  googleEventId: ge,
-                  ...(map && Object.keys(map).length ? { googleCalendarEventIdsByEmail: map } : {}),
-                }
-              : ev
-          );
-        }
-      }
-      const touched = new Set<string>();
-      for (let i = 0; i < batches.length; i++) {
-        for (const eid of batches[i].sourceEventIds) touched.add(eid);
-      }
-      const toSave = withGoogle.filter((ev) => touched.has(ev.id) && hasGoogleCalendarSync(ev));
-      await Promise.all(toSave.map((ev) => saveEvent(supabase, caseId, ev)));
+      const ge = calJson.googleEventIds?.[0];
+      const map = calJson.googleEventIdMaps?.[0];
+      if (!ge) throw new Error("Google Calendar did not return an event id.");
+      const updated: CalendarEvent = {
+        ...latest,
+        googleEventId: ge,
+        ...(map && Object.keys(map).length ? { googleCalendarEventIdsByEmail: map } : {}),
+      };
+      await saveEvent(supabase, caseId, updated);
       await logActivity(supabase, user.id, {
         caseId,
         caseName: displayName,
         action: "event_created",
-        description: `Created Google Calendar invites for ${toSave.length} deadline(s) that were missing sync`,
+        description: `Created Google Calendar invite for "${latest.title}" (${latest.date})`,
         userEmail: user.email ?? "",
       });
-      flash(`Created ${toSave.length} missing Google Calendar invite${toSave.length !== 1 ? "s" : ""}`);
+      flash(`Google invite created for "${latest.title}"`);
+      setEditing((prev) =>
+        prev?.id === latest.id
+          ? {
+              ...prev,
+              googleEventId: ge,
+              ...(map && Object.keys(map).length ? { googleCalendarEventIdsByEmail: map } : {}),
+            }
+          : prev
+      );
     } catch (e) {
-      let message = e instanceof Error ? e.message : "Could not create missing invites";
+      let message = e instanceof Error ? e.message : "Could not create Google invite";
       if (message === "Failed to fetch") {
         message =
-          "Network error or timeout while syncing. Refresh this page in a moment—some invites may have been created anyway.";
+          "Network error or timeout. Refresh in a moment—the invite may still have been created.";
       }
       setMsg(message);
     } finally {
-      gapSyncLock.current = false;
-      setGapSyncBusy(false);
+      setCreatingGoogleInviteId(null);
     }
   }
 
@@ -1118,26 +1101,6 @@ export default function CaseDetailPage() {
         </div>
       </div>
 
-      {c.status === "active" && unsyncedGoogleCount > 0 && (
-        <div className="mt-4 flex flex-col gap-3 rounded-lg border border-primary/25 bg-primary/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-sm text-text">
-            <span className="font-medium text-text">{unsyncedGoogleCount}</span>{" "}
-            {unsyncedGoogleCount === 1 ? "deadline is" : "deadlines are"} in DocketFlow but{" "}
-            {unsyncedGoogleCount === 1 ? "does not have" : "do not have"} a Google Calendar invite yet
-            (for example after a timeout during import). This only creates invites for rows still missing sync.
-          </p>
-          <Button
-            variant="primary"
-            size="sm"
-            className="shrink-0"
-            disabled={busy || gapSyncBusy || !idToken}
-            onClick={() => void syncMissingGoogleInvites()}
-          >
-            {gapSyncBusy ? "Creating…" : "Create missing Google invites"}
-          </Button>
-        </div>
-      )}
-
       {/* Assigned contacts */}
       <Card className="mt-6">
         <CardBody>
@@ -1401,7 +1364,7 @@ export default function CaseDetailPage() {
                       {isGoogleIcsMirrorEvent(ev) ? (
                         <Badge variant="default">Originally from Google</Badge>
                       ) : (
-                        ev.googleEventId && <Badge variant="success">Synced</Badge>
+                        hasGoogleCalendarSync(ev) && <Badge variant="success">Synced</Badge>
                       )}
                       {ev.noiseFlag && <Badge variant="warning">{ev.noiseReason ?? "Noise"}</Badge>}
                       {overdue && <Badge variant="danger">Overdue</Badge>}
@@ -1455,6 +1418,20 @@ export default function CaseDetailPage() {
                         Complete
                       </label>
                       <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={() => setEditing(calendarEventForEdit(ev))}>Edit</button>
+                      {c.status === "active" &&
+                        !isGoogleIcsMirrorEvent(ev) &&
+                        !ev.completed &&
+                        ev.included &&
+                        !hasGoogleCalendarSync(ev) && (
+                          <button
+                            type="button"
+                            className="text-xs font-medium text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                            disabled={busy || Boolean(creatingGoogleInviteId) || !idToken}
+                            onClick={() => void createGoogleInviteForEvent(ev)}
+                          >
+                            {creatingGoogleInviteId === ev.id ? "Creating invite…" : "Create Google invite"}
+                          </button>
+                        )}
                       <button type="button" className="text-xs font-medium text-danger hover:underline" onClick={() => void removeEvent(ev)} disabled={busy}>Remove</button>
                     </div>
                   </div>
@@ -1641,6 +1618,29 @@ export default function CaseDetailPage() {
                   onChange={(next) => setEditing({ ...editing, googleColorId: next })}
                 />
               )}
+              {c?.status === "active" &&
+                !isGoogleIcsMirrorEvent(editing) &&
+                !editing.completed &&
+                editing.included &&
+                !hasGoogleCalendarSync(editing) && (
+                  <div className="rounded-lg border border-border bg-surface-alt/60 px-4 py-3 text-sm text-text-secondary">
+                    <p className="font-medium text-text">Google Calendar invite</p>
+                    <p className="mt-1 text-xs text-text-muted">
+                      Creates a DocketFlow-managed invite from the <span className="font-medium text-text-secondary">last saved</span>{" "}
+                      version of this deadline. Save changes above first if you edited title, date, or times.
+                    </p>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="mt-2"
+                      type="button"
+                      disabled={busy || creatingGoogleInviteId !== null || !idToken}
+                      onClick={() => void createGoogleInviteForEvent(editing)}
+                    >
+                      {creatingGoogleInviteId === editing.id ? "Creating invite…" : "Create Google invite"}
+                    </Button>
+                  </div>
+                )}
               <div>
                 <Label>External attendees / parties</Label>
                 <Textarea
