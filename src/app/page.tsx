@@ -9,6 +9,7 @@ import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
 import {
   fetchCasesWithEvents,
+  saveEvent,
   subscribeActivity,
   subscribeCaseEventsFirm,
   subscribeContacts,
@@ -82,10 +83,14 @@ function DeadlineSection({
   rows,
   urgency,
   contactById,
+  onMarkComplete,
+  completingEventId,
 }: {
   rows: Row[];
   urgency: Urgency;
   contactById: Map<string, Contact>;
+  onMarkComplete?: (row: Row) => void;
+  completingEventId?: string | null;
 }) {
   if (!rows.length) return null;
   const cfg = sectionConfig[urgency];
@@ -105,34 +110,51 @@ function DeadlineSection({
             const assign = c.assignedContactIds;
             const att = assign[0] ? contactById.get(assign[0]) : undefined;
             const par = assign[1] ? contactById.get(assign[1]) : undefined;
+            const completing = completingEventId === e.id;
             return (
-              <li key={`${c.id}-${e.id}`}>
-                <Link
-                  href={`/cases/${c.id}`}
-                  className="group flex items-center justify-between rounded-lg px-3 py-2.5 transition-colors hover:bg-surface-alt"
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-text group-hover:text-primary">
-                      {e.title}
-                    </p>
-                    <p className="truncate text-xs text-text-muted">{c.name} · {c.clientName}</p>
-                    <p className="truncate text-xs text-text-muted">
-                      {att?.name ?? "—"}
-                      <span className="text-text-dim"> · </span>
-                      {par?.name ?? "—"}
-                    </p>
-                  </div>
-                  <div className="ml-4 flex shrink-0 items-center gap-2">
-                    <span className={`text-xs font-semibold tabular-nums ${days < 0 ? "text-danger" : days <= 7 ? "text-warning" : "text-text-muted"}`}>
-                      {label}
-                    </span>
-                    <span className="text-xs tabular-nums text-text-dim">
-                      {e.deadlineEndDate && e.deadlineEndDate > e.date && !e.startDateTime
-                        ? `${format(parseISO(e.date), "MMM d")}–${format(parseISO(e.deadlineEndDate), "MMM d")}`
-                        : format(parseISO(e.date), "MMM d")}
-                    </span>
+              <li
+                key={`${c.id}-${e.id}`}
+                className="flex items-center gap-2 rounded-lg px-3 py-2.5 transition-colors hover:bg-surface-alt"
+              >
+                <Link href={`/cases/${c.id}`} className="group min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-text group-hover:text-primary">
+                        {e.title}
+                      </p>
+                      <p className="truncate text-xs text-text-muted">{c.name} · {c.clientName}</p>
+                      <p className="truncate text-xs text-text-muted">
+                        {att?.name ?? "—"}
+                        <span className="text-text-dim"> · </span>
+                        {par?.name ?? "—"}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span
+                        className={`text-xs font-semibold tabular-nums ${days < 0 ? "text-danger" : days <= 7 ? "text-warning" : "text-text-muted"}`}
+                      >
+                        {label}
+                      </span>
+                      <span className="text-xs tabular-nums text-text-dim">
+                        {e.deadlineEndDate && e.deadlineEndDate > e.date && !e.startDateTime
+                          ? `${format(parseISO(e.date), "MMM d")}–${format(parseISO(e.deadlineEndDate), "MMM d")}`
+                          : format(parseISO(e.date), "MMM d")}
+                      </span>
+                    </div>
                   </div>
                 </Link>
+                {onMarkComplete && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="shrink-0"
+                    disabled={Boolean(completingEventId)}
+                    onClick={() => onMarkComplete({ case: c, event: e })}
+                  >
+                    {completing ? "…" : "Complete"}
+                  </Button>
+                )}
               </li>
             );
           })}
@@ -225,6 +247,8 @@ export default function DashboardPage() {
   const [showDateModal, setShowDateModal] = useState(false);
   const [timelineStart, setTimelineStart] = useState(() => todayIso());
   const [timelineEnd, setTimelineEnd] = useState(() => defaultDashboardEnd(todayIso()));
+  const [completingEventId, setCompletingEventId] = useState<string | null>(null);
+  const [rowActionError, setRowActionError] = useState<string | null>(null);
 
   const loadDashboard = useCallback(async () => {
     if (!user || !supabaseReady) return;
@@ -325,6 +349,25 @@ export default function DashboardPage() {
   const paralegalOptions = useMemo(
     () => paralegals.map((c) => ({ id: c.id, label: c.name })),
     [paralegals]
+  );
+
+  const markEventComplete = useCallback(
+    async ({ case: c, event: e }: Row) => {
+      if (!user || completingEventId) return;
+      setRowActionError(null);
+      setCompletingEventId(e.id);
+      try {
+        const supabase = getBrowserSupabase();
+        await saveEvent(supabase, c.id, { ...e, completed: true, updatedAt: Date.now() });
+        setRows((prev) => prev.filter((r) => !(r.case.id === c.id && r.event.id === e.id)));
+        setTotalDeadlineCount((n) => Math.max(0, n - 1));
+      } catch (err) {
+        setRowActionError(err instanceof Error ? err.message : "Could not mark complete");
+      } finally {
+        setCompletingEventId(null);
+      }
+    },
+    [user, completingEventId]
   );
 
   const filteredRows = useMemo(() => {
@@ -528,6 +571,12 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {rowActionError && (
+        <div className="mt-6 rounded-lg border border-danger/20 bg-danger-light px-4 py-3" role="alert">
+          <p className="text-sm text-danger">{rowActionError}</p>
+        </div>
+      )}
+
       {refreshing && !loadError && (
         <div className="mt-8 flex items-center gap-3">
           <Spinner className="h-4 w-4" />
@@ -546,17 +595,50 @@ export default function DashboardPage() {
               {overdueCount} overdue deadline{overdueCount !== 1 ? "s" : ""} need attention
             </span>
           </div>
+          <p className="mt-2 text-xs text-text-secondary">
+            Use <span className="font-medium text-text">Complete</span> on a row to mark it done and remove it from this list (the deadline stays on the case).
+          </p>
         </div>
       )}
 
       {/* Deadline sections + activity sidebar */}
       <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_340px]">
         <div className="space-y-4">
-          <DeadlineSection rows={grouped.overdue} urgency="overdue" contactById={contactById} />
-          <DeadlineSection rows={grouped.today} urgency="today" contactById={contactById} />
-          <DeadlineSection rows={grouped.week} urgency="week" contactById={contactById} />
-          <DeadlineSection rows={grouped.fortnight} urgency="fortnight" contactById={contactById} />
-          <DeadlineSection rows={grouped.quarter} urgency="quarter" contactById={contactById} />
+          <DeadlineSection
+            rows={grouped.overdue}
+            urgency="overdue"
+            contactById={contactById}
+            onMarkComplete={(row) => void markEventComplete(row)}
+            completingEventId={completingEventId}
+          />
+          <DeadlineSection
+            rows={grouped.today}
+            urgency="today"
+            contactById={contactById}
+            onMarkComplete={(row) => void markEventComplete(row)}
+            completingEventId={completingEventId}
+          />
+          <DeadlineSection
+            rows={grouped.week}
+            urgency="week"
+            contactById={contactById}
+            onMarkComplete={(row) => void markEventComplete(row)}
+            completingEventId={completingEventId}
+          />
+          <DeadlineSection
+            rows={grouped.fortnight}
+            urgency="fortnight"
+            contactById={contactById}
+            onMarkComplete={(row) => void markEventComplete(row)}
+            completingEventId={completingEventId}
+          />
+          <DeadlineSection
+            rows={grouped.quarter}
+            urgency="quarter"
+            contactById={contactById}
+            onMarkComplete={(row) => void markEventComplete(row)}
+            completingEventId={completingEventId}
+          />
 
           {!refreshing && filteredRows.length === 0 && !loadError && (
             <EmptyState
