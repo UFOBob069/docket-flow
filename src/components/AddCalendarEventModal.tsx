@@ -37,6 +37,12 @@ import {
   localDateTimePartsToIso,
 } from "@/lib/five-minute-datetime";
 import {
+  FederalHolidayBlockedNotice,
+  FederalHolidayDateInput,
+} from "@/components/FederalHolidayDateInput";
+import { useFederalHolidays } from "@/hooks/useFederalHolidays";
+import { validateEventScheduleAgainstFederalHolidays } from "@/lib/federal-holidays";
+import {
   Button,
   Card,
   CardBody,
@@ -107,6 +113,9 @@ export function AddCalendarEventModal({
   const [openSlotWarnings, setOpenSlotWarnings] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [holidayDateMsg, setHolidayDateMsg] = useState<string | null>(null);
+  const [holidayEndMsg, setHolidayEndMsg] = useState<string | null>(null);
+  const { holidays } = useFederalHolidays();
 
   const pickerKey = casePickerOptions.map((c) => c.id).join("|");
   const needCaseStep = !lockedCase && casePickerOptions.length > 0;
@@ -196,6 +205,19 @@ export function AddCalendarEventModal({
     }
     if (!addEventDate.trim()) {
       setMsg("Event date is required.");
+      return;
+    }
+    const holidayErr = validateEventScheduleAgainstFederalHolidays(
+      {
+        date: addEventDate.trim().slice(0, 10),
+        deadlineEndDate:
+          scheduleKind === "deadline" && !addStartTime ? addDeadlineEndDate : null,
+        startDateTime: addStartTime ? "set" : null,
+      },
+      holidays
+    );
+    if (holidayErr || holidayDateMsg || holidayEndMsg) {
+      setMsg(holidayErr ?? holidayDateMsg ?? holidayEndMsg ?? "Choose a date that is not a federal holiday.");
       return;
     }
     if (addEndTime && !addStartTime) {
@@ -664,12 +686,14 @@ export function AddCalendarEventModal({
               </div>
               <div>
                 <Label required>Event date</Label>
-                <Input
-                  type="date"
+                <FederalHolidayDateInput
                   className="mt-1.5"
                   value={addEventDate}
-                  onChange={(e) => setAddEventDate(e.target.value)}
+                  holidays={holidays}
+                  onValueChange={setAddEventDate}
+                  onBlocked={setHolidayDateMsg}
                 />
+                <FederalHolidayBlockedNotice message={holidayDateMsg} />
                 <p className="mt-1 text-xs text-text-dim">
                   {scheduleKind === "deadline" ? (
                     <>
@@ -687,16 +711,20 @@ export function AddCalendarEventModal({
               {scheduleKind === "deadline" && !addStartTime && (
                 <div>
                   <Label>Last day of deadline (optional)</Label>
-                  <Input
-                    type="date"
+                  <FederalHolidayDateInput
                     className="mt-1.5"
                     min={addEventDate || undefined}
                     value={addDeadlineEndDate}
-                    onChange={(e) => setAddDeadlineEndDate(e.target.value)}
+                    holidays={holidays}
+                    spanStart={addEventDate || undefined}
+                    disabled={!addEventDate}
+                    onValueChange={setAddDeadlineEndDate}
+                    onBlocked={setHolidayEndMsg}
                   />
+                  <FederalHolidayBlockedNotice message={holidayEndMsg} />
                   <p className="mt-1 text-xs text-text-dim">
                     Blank = single calendar day. Otherwise the last day of the span (inclusive); Google shows one
-                    all-day block across those dates.
+                    all-day block across those dates. No day in the span may be a US federal holiday.
                   </p>
                 </div>
               )}
@@ -1022,7 +1050,11 @@ export function AddCalendarEventModal({
               </Button>
             )}
             {phase === "details" && c && (
-              <Button variant="pink" disabled={busy} onClick={() => void saveNewCalendarEvent()}>
+              <Button
+                variant="pink"
+                disabled={busy || Boolean(holidayDateMsg) || Boolean(holidayEndMsg)}
+                onClick={() => void saveNewCalendarEvent()}
+              >
                 {busy ? "Saving…" : "Save & sync"}
               </Button>
             )}

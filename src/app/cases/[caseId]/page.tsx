@@ -49,6 +49,12 @@ import type {
   EventScheduleKind,
 } from "@/lib/types";
 import { AddCalendarEventModal } from "@/components/AddCalendarEventModal";
+import {
+  FederalHolidayBlockedNotice,
+  FederalHolidayDateInput,
+} from "@/components/FederalHolidayDateInput";
+import { useFederalHolidays } from "@/hooks/useFederalHolidays";
+import { validateEventScheduleAgainstFederalHolidays } from "@/lib/federal-holidays";
 import type { MonthlyCalendarEventChip } from "@/components/MonthlyEventCalendar";
 import { FixedRemindersReadout } from "@/components/FixedRemindersReadout";
 import { MonthlyEventCalendar } from "@/components/MonthlyEventCalendar";
@@ -232,6 +238,9 @@ export default function CaseDetailPage() {
   const [verifyBusy, setVerifyBusy] = useState(false);
   const [verifyResult, setVerifyResult] = useState<VerifyResponse | null>(null);
   const [creatingGoogleInviteId, setCreatingGoogleInviteId] = useState<string | null>(null);
+  const [editHolidayDateMsg, setEditHolidayDateMsg] = useState<string | null>(null);
+  const [editHolidayEndMsg, setEditHolidayEndMsg] = useState<string | null>(null);
+  const { holidays } = useFederalHolidays();
 
   const [showAddEvent, setShowAddEvent] = useState(false);
   const [eventViewMode, setEventViewMode] = useState<"timeline" | "month">("timeline");
@@ -279,6 +288,8 @@ export default function CaseDetailPage() {
     }
     if (lastEditId.current === editing.id) return;
     lastEditId.current = editing.id;
+    setEditHolidayDateMsg(null);
+    setEditHolidayEndMsg(null);
     setPickStartTime(
       editing.startDateTime ? isoToLocalDateTimeParts(editing.startDateTime).time : ""
     );
@@ -719,6 +730,21 @@ export default function CaseDetailPage() {
       const supabase = getBrowserSupabase();
       let updated: CalendarEvent = { ...editing, updatedAt: Date.now() };
       const day = updated.date;
+      const holidayErr = validateEventScheduleAgainstFederalHolidays(
+        {
+          date: day,
+          deadlineEndDate: updated.deadlineEndDate,
+          startDateTime: pickStartTime ? updated.startDateTime : null,
+        },
+        holidays
+      );
+      if (holidayErr || editHolidayDateMsg || editHolidayEndMsg) {
+        setMsg(
+          holidayErr ?? editHolidayDateMsg ?? editHolidayEndMsg ?? "Choose dates that are not federal holidays."
+        );
+        setBusy(false);
+        return;
+      }
       if (pickStartTime) {
         const startIso = localDateTimePartsToIso(day, pickStartTime);
         let endIso: string;
@@ -830,8 +856,26 @@ export default function CaseDetailPage() {
     if (isNaN(days) || days === 0) { setMsg("Enter a non-zero number of days"); return; }
     setBusy(true); setMsg(null);
     try {
-      const supabase = getBrowserSupabase();
       const selectedEvents = events.filter((e) => selected.has(e.id));
+      for (const ev of selectedEvents) {
+        const newDate = shiftCalendarDays(ev.date, days);
+        const newDeadline =
+          !ev.startDateTime && ev.deadlineEndDate
+            ? shiftCalendarDays(ev.deadlineEndDate, days)
+            : null;
+        const holidayErr = validateEventScheduleAgainstFederalHolidays(
+          { date: newDate, deadlineEndDate: newDeadline, startDateTime: ev.startDateTime },
+          holidays
+        );
+        if (holidayErr) {
+          setMsg(
+            `Cannot shift "${ev.title}" by ${days} day(s): ${holidayErr}`
+          );
+          setBusy(false);
+          return;
+        }
+      }
+      const supabase = getBrowserSupabase();
       await bulkRescheduleEvents(supabase, caseId, [...selected], days);
       for (const ev of selectedEvents) {
         if (isGoogleIcsMirrorEvent(ev) || !ev.googleEventId) continue;
@@ -1538,34 +1582,41 @@ export default function CaseDetailPage() {
               <div><Label>Title</Label><Input className="mt-1.5" value={editing.title} onChange={(e) => setEditing({ ...editing, title: e.target.value })} /></div>
               <div>
                 <Label>Event date</Label>
-                <Input
-                  type="date"
+                <FederalHolidayDateInput
                   className="mt-1.5"
                   value={editing.date}
-                  onChange={(e) => setEditing({ ...editing, date: e.target.value })}
+                  holidays={holidays}
+                  onValueChange={(date) => setEditing({ ...editing, date })}
+                  onBlocked={setEditHolidayDateMsg}
                 />
+                <FederalHolidayBlockedNotice message={editHolidayDateMsg} />
                 <p className="mt-1 text-xs text-text-dim">
-                  Times below apply only to this day.
+                  Times below apply only to this day. US federal holidays cannot be selected.
                 </p>
               </div>
               {(editing.scheduleKind ?? "deadline") === "deadline" && !pickStartTime && (
                 <div>
                   <Label>Last day of deadline (optional)</Label>
-                  <Input
-                    type="date"
+                  <FederalHolidayDateInput
                     className="mt-1.5"
                     min={editing.date}
                     value={editing.deadlineEndDate ?? ""}
-                    onChange={(e) =>
+                    holidays={holidays}
+                    spanStart={editing.date}
+                    disabled={!editing.date}
+                    onValueChange={(deadlineEndDate) =>
                       setEditing({
                         ...editing,
-                        deadlineEndDate: e.target.value.trim() || null,
+                        deadlineEndDate: deadlineEndDate.trim() || null,
                       })
                     }
+                    onBlocked={setEditHolidayEndMsg}
                   />
+                  <FederalHolidayBlockedNotice message={editHolidayEndMsg} />
                   <p className="mt-1 text-xs text-text-dim">
                     Leave blank for a single-day deadline. Set to the last calendar day (inclusive) for a span across
-                    multiple days — Google Calendar shows one all-day block.
+                    multiple days — Google Calendar shows one all-day block. No day in the span may be a federal
+                    holiday.
                   </p>
                 </div>
               )}
@@ -1675,7 +1726,12 @@ export default function CaseDetailPage() {
               )}
               <div className="flex justify-end gap-3 pt-2">
                 <Button variant="ghost" onClick={() => setEditing(null)}>Cancel</Button>
-                <Button disabled={busy} onClick={() => void saveEdit()}>Save Changes</Button>
+                <Button
+                  disabled={busy || Boolean(editHolidayDateMsg) || Boolean(editHolidayEndMsg)}
+                  onClick={() => void saveEdit()}
+                >
+                  Save Changes
+                </Button>
               </div>
             </CardBody>
           </Card>

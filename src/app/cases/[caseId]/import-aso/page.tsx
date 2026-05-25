@@ -29,6 +29,12 @@ import type {
   ExtractedDeadline,
 } from "@/lib/types";
 import { FixedRemindersReadout } from "@/components/FixedRemindersReadout";
+import {
+  FederalHolidayBlockedNotice,
+  FederalHolidayDateInput,
+} from "@/components/FederalHolidayDateInput";
+import { useFederalHolidays } from "@/hooks/useFederalHolidays";
+import { validateEventScheduleAgainstFederalHolidays } from "@/lib/federal-holidays";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { useHydrated } from "@/hooks/useHydrated";
 import {
@@ -100,6 +106,8 @@ export default function ImportAsoPage() {
   const [datesValidatedConfirmed, setDatesValidatedConfirmed] = useState(false);
 
   const importFinalizeLock = useRef(false);
+  const [manualHolidayMsg, setManualHolidayMsg] = useState<string | null>(null);
+  const { holidays } = useFederalHolidays();
 
   const [manualDeadlineDate, setManualDeadlineDate] = useState("");
   const [manualDeadlineKind, setManualDeadlineKind] = useState<EventKind>(DEFAULT_CASE_EVENT_KIND);
@@ -227,6 +235,11 @@ export default function ImportAsoPage() {
       setErr("Enter a title for the deadline you are adding.");
       return;
     }
+    const holidayErr = validateEventScheduleAgainstFederalHolidays({ date }, holidays);
+    if (holidayErr || manualHolidayMsg) {
+      setErr(holidayErr ?? manualHolidayMsg ?? "Choose a date that is not a federal holiday.");
+      return;
+    }
     const row: ExtractedDeadline = {
       date,
       title,
@@ -259,6 +272,20 @@ export default function ImportAsoPage() {
     if (!events.some((e) => e.included)) {
       setErr("Include at least one deadline before saving.");
       return;
+    }
+    for (const e of events.filter((ev) => ev.included)) {
+      const holidayErr = validateEventScheduleAgainstFederalHolidays(
+        {
+          date: e.date,
+          deadlineEndDate: e.deadlineEndDate,
+          startDateTime: e.startDateTime,
+        },
+        holidays
+      );
+      if (holidayErr) {
+        setErr(`"${e.title}" (${e.date}): ${holidayErr}`);
+        return;
+      }
     }
     if (!attorneyId || !paralegalId) {
       setErr("Select an attorney and paralegal contact.");
@@ -579,7 +606,8 @@ export default function ImportAsoPage() {
           <div>
             <h2 className="text-lg font-semibold text-text">Review Extracted Deadlines</h2>
             <p className="mt-1 text-sm text-text-muted">
-              Edit, include/exclude, and set the event type for each deadline. Reminders follow the type (same as Add calendar event).
+              Edit, include/exclude, and set the event type for each deadline. Reminders follow the type (same as Add calendar
+              event). US federal holidays cannot be used as event dates.
             </p>
           </div>
 
@@ -595,11 +623,17 @@ export default function ImportAsoPage() {
                     <span className="flex h-6 w-6 items-center justify-center rounded-full bg-surface-alt text-[10px] font-bold text-text-muted">
                       {idx + 1}
                     </span>
-                    <Input
-                      type="date"
+                    <FederalHolidayDateInput
                       className="w-auto text-sm"
                       value={ev.date}
-                      onChange={(e) => updateEvent(ev.id, { date: e.target.value })}
+                      holidays={holidays}
+                      onValueChange={(date) => {
+                        updateEvent(ev.id, { date });
+                        setErr(null);
+                      }}
+                      onBlocked={(message) => {
+                        if (message) setErr(message);
+                      }}
                     />
                     <Select
                       className="min-w-[12rem] max-w-[20rem] flex-1 text-sm"
@@ -691,12 +725,14 @@ export default function ImportAsoPage() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <Label required>Date</Label>
-                  <Input
-                    type="date"
+                  <FederalHolidayDateInput
                     className="mt-1.5"
                     value={manualDeadlineDate}
-                    onChange={(e) => setManualDeadlineDate(e.target.value)}
+                    holidays={holidays}
+                    onValueChange={setManualDeadlineDate}
+                    onBlocked={setManualHolidayMsg}
                   />
+                  <FederalHolidayBlockedNotice message={manualHolidayMsg} />
                 </div>
                 <div>
                   <Label required>Event type</Label>
