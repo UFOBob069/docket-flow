@@ -9,6 +9,7 @@ import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
 import { caseDisplayName } from "@/lib/case-display";
 import { buildCalendarBatches, googleCalendarDescription, hasGoogleCalendarSync } from "@/lib/calendar-payload";
+import { isBackfillNonSyncEvent } from "@/lib/calendar-gap-sync";
 import { postCalendarSync } from "@/lib/calendar-client";
 import { CALENDAR_TIMEZONE, defaultEndIso } from "@/lib/event-factory";
 import {
@@ -353,6 +354,7 @@ export default function CaseDetailPage() {
     if (!caseId || !c || c.status !== "active" || !user || !idToken) return;
     if (creatingGoogleInviteId) return;
     if (isGoogleIcsMirrorEvent(sourceEv) || sourceEv.completed || !sourceEv.included) return;
+    if (isBackfillNonSyncEvent(sourceEv)) return;
 
     setCreatingGoogleInviteId(sourceEv.id);
     setMsg(null);
@@ -1464,6 +1466,7 @@ export default function CaseDetailPage() {
                       <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={() => setEditing(calendarEventForEdit(ev))}>Edit</button>
                       {c.status === "active" &&
                         !isGoogleIcsMirrorEvent(ev) &&
+                        !isBackfillNonSyncEvent(ev) &&
                         !ev.completed &&
                         ev.included &&
                         !hasGoogleCalendarSync(ev) && (
@@ -1671,6 +1674,7 @@ export default function CaseDetailPage() {
               )}
               {c?.status === "active" &&
                 !isGoogleIcsMirrorEvent(editing) &&
+                !isBackfillNonSyncEvent(editing) &&
                 !editing.completed &&
                 editing.included &&
                 !hasGoogleCalendarSync(editing) && (

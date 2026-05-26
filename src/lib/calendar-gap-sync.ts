@@ -33,9 +33,16 @@ export function attendeeEmailsForCase(caseRecord: Case, contacts: Contact[]): st
   );
 }
 
+export function isBackfillNonSyncEvent(ev: Pick<CalendarEvent, "description">): boolean {
+  return (ev.description ?? "").toLowerCase().includes("backfill");
+}
+
 export function eligibilityForGoogleCreate(c: Case, ev: CalendarEvent): { canCreate: boolean; blockReason: string | null } {
   if (hasGoogleCalendarSync(ev)) {
     return { canCreate: false, blockReason: "Already has Google Calendar linkage" };
+  }
+  if (isBackfillNonSyncEvent(ev)) {
+    return { canCreate: false, blockReason: "Backfill in description (no Google invite needed)" };
   }
   if (isGoogleIcsMirrorEvent(ev)) {
     return { canCreate: false, blockReason: "Originally from Google (local mirror only)" };

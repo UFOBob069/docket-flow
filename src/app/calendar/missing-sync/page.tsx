@@ -236,8 +236,9 @@ export default function MissingCalendarSyncPage() {
           <h1 className="mt-1 text-2xl font-semibold tracking-tight text-text">Missing Google Calendar sync</h1>
           <p className="mt-2 max-w-2xl text-sm text-text-muted">
             Today and upcoming deadlines in DocketFlow with no Google event id. Select rows and create invites for
-            anything that should be on the team calendar. Past dates are hidden. Backfills, ICS mirrors, completed,
-            and excluded rows appear under blocked items when enabled.
+            anything that should be on the team calendar. Past dates are hidden. Rows whose description includes{" "}
+            <span className="font-medium text-text-secondary">backfill</span>, ICS mirrors, completed, and excluded
+            items appear under blocked when enabled.
           </p>
         </div>
         <Button variant="secondary" size="sm" disabled={refreshing || syncBusy} onClick={() => void loadRows()}>
@@ -373,6 +374,9 @@ export default function MissingCalendarSyncPage() {
                           <span> · {c.clientName}</span>
                         )}
                       </p>
+                      {e.description?.trim() && (
+                        <p className="mt-1 line-clamp-2 text-xs text-text-secondary">{e.description.trim()}</p>
+                      )}
                       {blockReason && (
                         <p className="mt-1 text-xs text-text-dim">{blockReason}</p>
                       )}
