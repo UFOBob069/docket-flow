@@ -4,13 +4,19 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useAuth, userAvatarUrl, userDisplayName } from "@/context/AuthContext";
+import { canAccessCalendarMissingSync } from "@/lib/calendar-gap-sync";
 import { useState } from "react";
 
 const FIRM_LOGO_PATH = "/firm-logo.webp";
 
 const navLinks = [
   { href: "/", label: "Dashboard", match: (p: string) => p === "/" },
-  { href: "/calendar", label: "Calendar", match: (p: string) => p.startsWith("/calendar") },
+  { href: "/calendar", label: "Calendar", match: (p: string) => p === "/calendar" },
+  {
+    href: "/calendar/missing-sync",
+    label: "Missing sync",
+    match: (p: string) => p.startsWith("/calendar/missing-sync"),
+  },
   {
     href: "/cases",
     label: "Cases",
@@ -56,7 +62,13 @@ export function NavBar() {
         </Link>
 
         <nav className="flex flex-1 items-center justify-end gap-1">
-          {navLinks.map((l) => {
+          {navLinks
+            .filter(
+              (l) =>
+                l.href !== "/calendar/missing-sync" ||
+                canAccessCalendarMissingSync(user?.email)
+            )
+            .map((l) => {
             const active = l.match(pathname);
             return (
               <Link
