@@ -6,7 +6,11 @@ import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
-import { buildCalendarBatches, hasGoogleCalendarSync } from "@/lib/calendar-payload";
+import { hasGoogleCalendarSync } from "@/lib/calendar-payload";
+import {
+  syncGoogleInvitesSequential,
+  type ImportSyncLogEntry,
+} from "@/lib/calendar-gap-sync";
 import { DEFAULT_CASE_EVENT_KIND, getRemindersForEventKind } from "@/lib/case-event-kinds";
 import { extractedToCalendarEvents } from "@/lib/deadline-processing";
 import { caseDisplayName } from "@/lib/case-display";
@@ -14,7 +18,6 @@ import { ALL_EVENT_KIND_SELECT_GROUPS, categoryForManualEventKind } from "@/lib/
 import {
   fetchEventsForCase,
   logActivity,
-  saveEvent,
   setEventsForCase,
   subscribeCase,
   subscribeContacts,
@@ -73,6 +76,59 @@ function mergeGoogleIdsFromDb(local: CalendarEvent[], fromDb: CalendarEvent[]): 
 
 const stepLabels = ["Document", "Review", "Assign", "Confirm"];
 
+const syncStatusLabel: Record<ImportSyncLogEntry["status"], string> = {
+  pending: "Waiting",
+  syncing: "Creating invite…",
+  synced: "Saved & synced",
+  skipped: "Skipped",
+  failed: "Failed",
+};
+
+function ImportSyncStatusList({ entries }: { entries: ImportSyncLogEntry[] }) {
+  const synced = entries.filter((e) => e.status === "synced").length;
+  const needGoogle = entries.filter((e) => e.status !== "skipped").length;
+  return (
+    <div className="mt-6 rounded-lg border border-border bg-surface-alt/40">
+      <div className="border-b border-border px-4 py-2.5">
+        <p className="text-sm font-medium text-text">Calendar sync progress</p>
+        <p className="text-xs text-text-muted">
+          {needGoogle > 0
+            ? `${synced} of ${needGoogle} invite(s) saved to DocketFlow and Google`
+            : `${entries.length} row(s) — none need Google invites`}
+        </p>
+      </div>
+      <ul className="max-h-64 divide-y divide-border overflow-y-auto px-4 py-1">
+        {entries.map((entry) => (
+          <li key={entry.eventId} className="flex items-start justify-between gap-3 py-2.5 text-sm">
+            <div className="min-w-0">
+              <p className="truncate font-medium text-text">{entry.title}</p>
+              <p className="text-xs text-text-muted">{entry.date}</p>
+              {entry.detail && entry.status !== "syncing" && (
+                <p className="mt-0.5 text-xs text-text-dim">{entry.detail}</p>
+              )}
+            </div>
+            <span
+              className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
+                entry.status === "synced"
+                  ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+                  : entry.status === "failed"
+                    ? "bg-red-500/15 text-red-700 dark:text-red-400"
+                    : entry.status === "syncing"
+                      ? "bg-primary/15 text-primary"
+                      : entry.status === "skipped"
+                        ? "bg-surface text-text-muted"
+                        : "bg-surface text-text-dim"
+              }`}
+            >
+              {syncStatusLabel[entry.status]}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export default function ImportAsoPage() {
   const router = useRouter();
   const params = useParams();
@@ -102,10 +158,12 @@ export default function ImportAsoPage() {
   const [busy, setBusy] = useState(false);
   const [progressMsg, setProgressMsg] = useState<string | null>(null);
   const [progressPct, setProgressPct] = useState(0);
+  const [importSyncLog, setImportSyncLog] = useState<ImportSyncLogEntry[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [datesValidatedConfirmed, setDatesValidatedConfirmed] = useState(false);
 
   const importFinalizeLock = useRef(false);
+  const importSyncLogRef = useRef<ImportSyncLogEntry[]>([]);
   const [manualHolidayMsg, setManualHolidayMsg] = useState<string | null>(null);
   const { holidays } = useFederalHolidays();
 
@@ -300,6 +358,8 @@ export default function ImportAsoPage() {
     importFinalizeLock.current = true;
     setBusy(true);
     setErr(null);
+    setImportSyncLog([]);
+    importSyncLogRef.current = [];
     setProgressPct(0);
     setProgressMsg("Updating case…");
     try {
@@ -322,80 +382,49 @@ export default function ImportAsoPage() {
       setProgressPct(40);
 
       const displayName = caseDisplayName(caseRecord);
-      const toCreate = caseEvents.filter(
-        (e) => e.included && !e.completed && !hasGoogleCalendarSync(e)
-      );
-      const batches = buildCalendarBatches(toCreate);
-      const allContactIds = assignedContactIds;
+      const includedEvents = caseEvents.filter((e) => e.included);
       const attendeeEmails = Array.from(
         new Set(
-          allContactIds
+          assignedContactIds
             .map((id) => contacts.find((c) => c.id === id)?.email)
             .filter((e): e is string => Boolean(e))
         )
       );
 
-      let withGoogle: CalendarEvent[] = caseEvents.map((e) => ({ ...e }));
+      setProgressMsg("Syncing to Google Calendar (one invite at a time)…");
+      setProgressPct(45);
 
-      if (batches.length > 0) {
-        setProgressMsg("Syncing to Google Calendar…");
-        const calRes = await fetch("/api/calendar/sync", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${idToken}`,
-          },
-          body: JSON.stringify({
-            action: "create",
-            caseName: displayName,
-            sourceLabel: file?.name ?? "Document with dates",
-            events: batches.map((b) => ({
-              title: b.title,
-              date: b.date,
-              description: b.description,
-              reminderMinutes: b.reminderMinutes,
-              ...(b.scheduleKind ? { scheduleKind: b.scheduleKind } : {}),
-              ...(b.startDateTime ? { startDateTime: b.startDateTime } : {}),
-              ...(b.endDateTime ? { endDateTime: b.endDateTime } : {}),
-              ...(b.location ? { location: b.location } : {}),
-              ...(typeof b.googleColorId !== "undefined" ? { googleColorId: b.googleColorId } : {}),
-              ...(typeof b.deadlineEndDate !== "undefined" ? { deadlineEndDate: b.deadlineEndDate } : {}),
-            })),
-            attendeeEmails,
-          }),
-        });
-        setProgressPct(70);
-
-        const calJson = (await calRes.json()) as {
-          googleEventIds?: string[];
-          googleEventIdMaps?: Record<string, string>[];
-          error?: string;
-        };
-        if (!calRes.ok) throw new Error(calJson.error ?? "Google Calendar create failed");
-        const googleEventIds = calJson.googleEventIds ?? [];
-        const googleEventIdMaps = calJson.googleEventIdMaps ?? [];
-        for (let i = 0; i < batches.length; i++) {
-          const ge = googleEventIds[i];
-          const map = googleEventIdMaps[i];
-          if (!ge) continue;
-          for (const eid of batches[i].sourceEventIds) {
-            withGoogle = withGoogle.map((ev) =>
-              ev.id === eid
-                ? {
-                    ...ev,
-                    googleEventId: ge,
-                    ...(map && Object.keys(map).length ? { googleCalendarEventIdsByEmail: map } : {}),
-                  }
-                : ev
-            );
+      const syncResult = await syncGoogleInvitesSequential(supabase, {
+        caseRecord,
+        events: includedEvents,
+        attendeeEmails,
+        sourceLabel: file?.name ?? "Document with dates",
+        idToken,
+        onLogUpdate: (entries) => {
+          importSyncLogRef.current = entries;
+          setImportSyncLog(entries);
+          const needSync = entries.filter((e) => e.status !== "skipped").length;
+          const done = entries.filter((e) => e.status === "synced").length;
+          if (needSync > 0) {
+            setProgressPct(45 + Math.round((done / needSync) * 50));
           }
-        }
-      } else {
-        setProgressMsg("Calendar up to date — skipping new Google creates…");
+          const syncing = entries.find((e) => e.status === "syncing");
+          if (syncing) {
+            setProgressMsg(`Google Calendar: ${syncing.title} (${syncing.date})…`);
+          }
+        },
+      });
+
+      if (syncResult.error) {
+        const partial =
+          syncResult.linked > 0
+            ? `${syncResult.linked} invite(s) were saved to DocketFlow and Google before this error. Open the case to finish the rest—do not click Import again. `
+            : "";
+        throw new Error(`${partial}${syncResult.error}`);
       }
 
       setProgressMsg("Finalizing…");
-      await Promise.all(withGoogle.map((ev) => saveEvent(supabase, caseId, ev)));
+      setProgressPct(98);
       const included = events.filter((e) => e.included).length;
       await logActivity(supabase, user.id, {
         caseId,
@@ -409,9 +438,13 @@ export default function ImportAsoPage() {
       router.push(`/cases/${caseId}`);
     } catch (e) {
       let msg = e instanceof Error ? e.message : "Could not import deadlines";
-      if (msg === "Failed to fetch") {
-        msg =
-          "Network error or timeout while saving or syncing. Check the case page before trying again—if events already synced, repeating Import can duplicate Google Calendar rows. Wait a minute, refresh the case, then only retry if rows are still missing.";
+      if (msg === "Failed to fetch" || msg.includes("Failed to fetch")) {
+        const synced = importSyncLogRef.current.filter((entry) => entry.status === "synced").length;
+        const base =
+          synced > 0
+            ? `${synced} invite(s) already saved. Open the case to sync any remaining rows—do not re-run Import. `
+            : "Network error or timeout. ";
+        msg = `${base}Check the status list below, then open the case to finish any rows still not synced.`;
       }
       setErr(msg);
       setProgressMsg(null);
@@ -905,7 +938,7 @@ export default function ImportAsoPage() {
           <CardHeader>
             <h2 className="text-base font-semibold text-text">Confirm &amp; Import</h2>
           </CardHeader>
-          <CardBody className="max-w-lg">
+          <CardBody className={busy || importSyncLog.length > 0 ? "max-w-2xl" : "max-w-lg"}>
             <dl className="space-y-3 text-sm">
               <div className="flex gap-3">
                 <dt className="w-28 shrink-0 font-medium text-text-muted">Case</dt>
@@ -937,8 +970,24 @@ export default function ImportAsoPage() {
                   />
                 </div>
                 <p className="text-xs text-text-dim">
-                  Please don&apos;t close this page while creation is in progress.
+                  Each invite is saved to DocketFlow as soon as Google returns an id. Please don&apos;t close this
+                  page until finished.
                 </p>
+              </div>
+            )}
+
+            {importSyncLog.length > 0 && (
+              <ImportSyncStatusList entries={importSyncLog} />
+            )}
+
+            {err && importSyncLog.some((e) => e.status === "synced") && (
+              <div className="mt-4">
+                <Link
+                  href={`/cases/${caseId}`}
+                  className="inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-hover"
+                >
+                  Open case to finish sync
+                </Link>
               </div>
             )}
 
@@ -946,9 +995,9 @@ export default function ImportAsoPage() {
               <>
                 <div className="mt-8 rounded-lg border border-border bg-surface-alt/60 px-4 py-3">
                   <p className="text-xs text-text-muted">
-                    If this step errors or your browser says &quot;Failed to fetch,&quot; open the case first and
-                    confirm whether deadlines already appear with &quot;Synced.&quot; Re-running import creates new
-                    Google rows only for events that are not synced yet.
+                    Calendar invites are created one at a time and saved to DocketFlow immediately. If something
+                    fails, use the status list and open the case—do not run Import again (that can duplicate Google
+                    events).
                   </p>
                 </div>
                 <div className="mt-4 rounded-lg border border-border bg-surface-alt/60 px-4 py-3">

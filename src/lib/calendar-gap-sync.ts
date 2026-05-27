@@ -93,6 +93,173 @@ export type GapSyncProgress = {
   total: number;
 };
 
+export type ImportSyncLogStatus = "pending" | "syncing" | "synced" | "skipped" | "failed";
+
+export type ImportSyncLogEntry = {
+  eventId: string;
+  title: string;
+  date: string;
+  status: ImportSyncLogStatus;
+  detail?: string;
+};
+
+export type SyncGoogleInvitesSequentialResult = {
+  linked: number;
+  skipped: number;
+  error?: string;
+  failedEventId?: string;
+};
+
+/** Create Google invites one event at a time; persist each row to Supabase before the next. */
+export async function syncGoogleInvitesSequential(
+  supabase: SupabaseClient,
+  params: {
+    caseRecord: Case;
+    /** Rows already saved to case_events (included deadlines eligible for calendar). */
+    events: CalendarEvent[];
+    attendeeEmails: string[];
+    sourceLabel: string;
+    idToken: string;
+    onLogUpdate: (entries: ImportSyncLogEntry[]) => void;
+  }
+): Promise<SyncGoogleInvitesSequentialResult> {
+  const { caseRecord, events, attendeeEmails, sourceLabel, idToken, onLogUpdate } = params;
+  const caseId = caseRecord.id;
+  const displayName = caseDisplayName(caseRecord);
+
+  const entries: ImportSyncLogEntry[] = events.map((ev) => {
+    const { canCreate, blockReason } = eligibilityForGoogleCreate(caseRecord, ev);
+    if (!canCreate) {
+      return {
+        eventId: ev.id,
+        title: ev.title,
+        date: ev.date,
+        status: "skipped" as const,
+        detail: blockReason ?? "No Google invite",
+      };
+    }
+    return {
+      eventId: ev.id,
+      title: ev.title,
+      date: ev.date,
+      status: "pending" as const,
+    };
+  });
+  onLogUpdate([...entries]);
+
+  let linked = 0;
+  let skipped = entries.filter((e) => e.status === "skipped").length;
+
+  const pendingIds = entries.filter((e) => e.status === "pending").map((e) => e.eventId);
+
+  for (let i = 0; i < pendingIds.length; i++) {
+    const eventId = pendingIds[i]!;
+    const idx = entries.findIndex((e) => e.eventId === eventId);
+    if (idx < 0) continue;
+
+    const fresh = await fetchEventsForCase(supabase, caseId);
+    const latest = fresh.find((e) => e.id === eventId);
+    if (!latest) {
+      entries[idx] = {
+        ...entries[idx]!,
+        status: "failed",
+        detail: "Event not found in database",
+      };
+      onLogUpdate([...entries]);
+      return { linked, skipped, error: "Event not found in database", failedEventId: eventId };
+    }
+
+    if (hasGoogleCalendarSync(latest)) {
+      entries[idx] = { ...entries[idx]!, status: "skipped", detail: "Already synced" };
+      skipped++;
+      onLogUpdate([...entries]);
+      continue;
+    }
+
+    const { canCreate, blockReason } = eligibilityForGoogleCreate(caseRecord, latest);
+    if (!canCreate) {
+      entries[idx] = {
+        ...entries[idx]!,
+        status: "skipped",
+        detail: blockReason ?? "No Google invite",
+      };
+      skipped++;
+      onLogUpdate([...entries]);
+      continue;
+    }
+
+    const batches = buildCalendarBatches([latest]);
+    const b = batches[0];
+    if (!b) {
+      entries[idx] = { ...entries[idx]!, status: "skipped", detail: "Cannot build calendar payload" };
+      skipped++;
+      onLogUpdate([...entries]);
+      continue;
+    }
+
+    entries[idx] = { ...entries[idx]!, status: "syncing", detail: `Creating invite ${i + 1} of ${pendingIds.length}…` };
+    onLogUpdate([...entries]);
+
+    try {
+      const res = await postCalendarSync(
+        {
+          action: "create",
+          caseName: displayName,
+          sourceLabel,
+          events: [
+            {
+              title: b.title,
+              date: b.date,
+              description: b.description,
+              reminderMinutes: b.reminderMinutes,
+              ...(b.scheduleKind ? { scheduleKind: b.scheduleKind } : {}),
+              ...(b.startDateTime ? { startDateTime: b.startDateTime } : {}),
+              ...(b.endDateTime ? { endDateTime: b.endDateTime } : {}),
+              ...(b.location ? { location: b.location } : {}),
+              ...(typeof b.googleColorId !== "undefined" ? { googleColorId: b.googleColorId } : {}),
+              ...(typeof b.deadlineEndDate !== "undefined" ? { deadlineEndDate: b.deadlineEndDate } : {}),
+            },
+          ],
+          attendeeEmails,
+        },
+        idToken
+      );
+      const calJson = (await res.json()) as {
+        googleEventIds?: string[];
+        googleEventIdMaps?: Record<string, string>[];
+        error?: string;
+      };
+      if (!res.ok) throw new Error(calJson.error ?? "Google Calendar create failed");
+
+      const ge = calJson.googleEventIds?.[0];
+      const map = calJson.googleEventIdMaps?.[0];
+      if (!ge) throw new Error("Google Calendar did not return an event id");
+
+      const updated: CalendarEvent = {
+        ...latest,
+        googleEventId: ge,
+        ...(map && Object.keys(map).length ? { googleCalendarEventIdsByEmail: map } : {}),
+      };
+      await saveEvent(supabase, caseId, updated);
+
+      entries[idx] = {
+        ...entries[idx]!,
+        status: "synced",
+        detail: "Saved to DocketFlow and Google Calendar",
+      };
+      linked++;
+      onLogUpdate([...entries]);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Google Calendar create failed";
+      entries[idx] = { ...entries[idx]!, status: "failed", detail: message };
+      onLogUpdate([...entries]);
+      return { linked, skipped, error: message, failedEventId: eventId };
+    }
+  }
+
+  return { linked, skipped };
+}
+
 export async function createGoogleInvitesForCase(
   supabase: SupabaseClient,
   params: {
