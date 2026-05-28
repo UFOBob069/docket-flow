@@ -448,15 +448,21 @@ export async function insertGoogleEvent(params: {
 
   const idsByEmail: Record<string, string> = {};
 
-  for (const userEmail of allRecipients) {
-    try {
-      console.log("[calendar] Creating event on", userEmail);
-      const id = await insertCalendarEventForUser(userEmail, payload);
-      if (id) idsByEmail[userEmail.toLowerCase()] = id;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn("[calendar] Could not create event for", userEmail, ":", msg);
-    }
+  const created = await Promise.all(
+    allRecipients.map(async (userEmail) => {
+      try {
+        console.log("[calendar] Creating event on", userEmail);
+        const id = await insertCalendarEventForUser(userEmail, payload);
+        return { userEmail: userEmail.toLowerCase(), id };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn("[calendar] Could not create event for", userEmail, ":", msg);
+        return { userEmail: userEmail.toLowerCase(), id: null as string | null };
+      }
+    })
+  );
+  for (const { userEmail, id } of created) {
+    if (id) idsByEmail[userEmail] = id;
   }
 
   const organizerEventId =

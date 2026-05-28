@@ -13,6 +13,8 @@ import { fetchAllFirmEventsContactEmails, mergeAttendeeEmailLists } from "@/lib/
 import { getUserFromBearer } from "@/lib/supabase/auth-server";
 
 export const runtime = "nodejs";
+/** Google Calendar creates one event per attendee; allow long imports on Vercel Pro. */
+export const maxDuration = 120;
 
 type CreateBody = {
   action: "create";
