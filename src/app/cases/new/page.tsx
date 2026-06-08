@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
+import { CASE_TYPE_OPTIONS, isCaseType } from "@/lib/case-types";
 import { createSolMilestoneEvents } from "@/lib/event-factory";
 import { buildSolMilestoneSpecs } from "@/lib/sol-milestones";
 import { createCase, logActivity, saveEvent, subscribeContacts } from "@/lib/supabase/repo";
@@ -96,6 +97,10 @@ export default function NewCasePage() {
       setErr("Selected attorney and paralegal must have the email/ID field filled on their contact (use a real email for Google).");
       return;
     }
+    if (!isCaseType(caseType)) {
+      setErr("Select a case type.");
+      return;
+    }
     const sol = adjustSolWeekendToFriday(
       (solDate || statuteLimitDateIsoForCalendar(doi, 2)).slice(0, 10)
     );
@@ -116,7 +121,7 @@ export default function NewCasePage() {
         causeNumber: cn,
         dateOfIncident: doi,
         notes: notes.trim() || null,
-        caseType: caseType.trim() || null,
+        caseType,
         assignedContactIds,
       });
 
@@ -367,8 +372,20 @@ export default function NewCasePage() {
               </div>
             </div>
             <div>
-              <Label>Case type</Label>
-              <Input className="mt-1.5" value={caseType} onChange={(e) => setCaseType(e.target.value)} placeholder="Optional" />
+              <Label required>Case type</Label>
+              <Select
+                className="mt-1.5"
+                value={caseType}
+                onChange={(e) => setCaseType(e.target.value)}
+                required
+              >
+                <option value="">Select case type…</option>
+                {CASE_TYPE_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </Select>
             </div>
             <div>
               <Label>Notes</Label>
