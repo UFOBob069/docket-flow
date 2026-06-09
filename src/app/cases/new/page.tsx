@@ -7,6 +7,7 @@ import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
 import { CASE_TYPE_OPTIONS, isCaseType } from "@/lib/case-types";
+import { digitsOnlyCaseNumberInput, isValidNumericCaseNumber } from "@/lib/case-display";
 import { createSolMilestoneEvents } from "@/lib/event-factory";
 import { buildSolMilestoneSpecs } from "@/lib/sol-milestones";
 import { createCase, logActivity, saveEvent, subscribeContacts } from "@/lib/supabase/repo";
@@ -85,6 +86,10 @@ export default function NewCasePage() {
     const doi = dateOfIncident.trim();
     if (!cn || !cl || !doi) {
       setErr("Case number, client name, and date of incident are required.");
+      return;
+    }
+    if (!isValidNumericCaseNumber(cn)) {
+      setErr("Case number must contain digits only.");
       return;
     }
     if (!attorneyId || !paralegalId) {
@@ -227,7 +232,16 @@ export default function NewCasePage() {
           <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
             <div>
               <Label required>Case number</Label>
-              <Input className="mt-1.5" value={caseNumber} onChange={(e) => setCaseNumber(e.target.value)} required />
+              <Input
+                className="mt-1.5"
+                value={caseNumber}
+                onChange={(e) => setCaseNumber(digitsOnlyCaseNumberInput(e.target.value))}
+                inputMode="numeric"
+                pattern="[0-9]+"
+                autoComplete="off"
+                placeholder="e.g. 240123"
+                required
+              />
             </div>
             <div>
               <Label required>Client name</Label>
