@@ -27,6 +27,7 @@ export default function NewCasePage() {
 
   const [caseNumber, setCaseNumber] = useState("");
   const [clientName, setClientName] = useState("");
+  const [dateOfBirth, setDateOfBirth] = useState("");
   const [dateOfIncident, setDateOfIncident] = useState("");
   const [attorneyId, setAttorneyId] = useState("");
   const [paralegalId, setParalegalId] = useState("");
@@ -83,9 +84,10 @@ export default function NewCasePage() {
     if (!user?.id || !idToken) return;
     const cn = caseNumber.trim();
     const cl = clientName.trim();
+    const dob = dateOfBirth.trim();
     const doi = dateOfIncident.trim();
-    if (!cn || !cl || !doi) {
-      setErr("Case number, client name, and date of incident are required.");
+    if (!cn || !cl || !dob || !doi) {
+      setErr("Case number, client name, date of birth, and date of incident are required.");
       return;
     }
     if (!isValidNumericCaseNumber(cn)) {
@@ -124,6 +126,7 @@ export default function NewCasePage() {
         clientName: cl,
         caseNumber: cn,
         causeNumber: cn,
+        dateOfBirth: dob,
         dateOfIncident: doi,
         notes: notes.trim() || null,
         caseType,
@@ -246,6 +249,16 @@ export default function NewCasePage() {
             <div>
               <Label required>Client name</Label>
               <Input className="mt-1.5" value={clientName} onChange={(e) => setClientName(e.target.value)} required />
+            </div>
+            <div>
+              <Label required>Date of birth</Label>
+              <Input
+                type="date"
+                className="mt-1.5"
+                value={dateOfBirth}
+                onChange={(e) => setDateOfBirth(e.target.value)}
+                required
+              />
             </div>
             <div>
               <Label required>Date of incident</Label>

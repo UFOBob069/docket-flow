@@ -101,6 +101,7 @@ function caseFromRow(r: Record<string, unknown>): Case {
     causeNumber: (r.cause_number as string) ?? null,
     court: (r.court as string) ?? null,
     dateOfIncident: (r.date_of_incident as string) ?? null,
+    dateOfBirth: (r.date_of_birth as string) ?? null,
     notes: (r.notes as string) ?? null,
     caseType: (r.case_type as string) ?? null,
     status: r.status as Case["status"],
@@ -511,6 +512,7 @@ export async function createCase(
     cause_number: input.causeNumber?.trim() || null,
     court: input.court?.trim() || null,
     date_of_incident: input.dateOfIncident?.trim() || null,
+    date_of_birth: input.dateOfBirth?.trim() || null,
     notes: input.notes?.trim() || null,
     case_type: input.caseType?.trim() || null,
     status: "active" as const,
@@ -537,6 +539,7 @@ export async function updateCase(
   if (patch.causeNumber !== undefined) row.cause_number = patch.causeNumber;
   if (patch.court !== undefined) row.court = patch.court;
   if (patch.dateOfIncident !== undefined) row.date_of_incident = patch.dateOfIncident;
+  if (patch.dateOfBirth !== undefined) row.date_of_birth = patch.dateOfBirth;
   if (patch.notes !== undefined) row.notes = patch.notes;
   if (patch.caseType !== undefined) row.case_type = patch.caseType;
   if (patch.status !== undefined) row.status = patch.status;

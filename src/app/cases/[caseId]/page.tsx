@@ -1061,6 +1061,12 @@ export default function CaseDetailPage() {
           <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-text-muted">
             {c.name && c.name !== caseDisplayName(c) && <span>{c.name}</span>}
             {c.court && <><span className="text-border-strong">·</span><span>{c.court}</span></>}
+            {c.dateOfBirth && (
+              <>
+                <span className="text-border-strong">·</span>
+                <span>DOB {c.dateOfBirth}</span>
+              </>
+            )}
             {c.dateOfIncident && (
               <>
                 <span className="text-border-strong">·</span>

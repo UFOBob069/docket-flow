@@ -121,6 +121,8 @@ export interface Case {
   court?: string | null;
   /** ISO date YYYY-MM-DD */
   dateOfIncident?: string | null;
+  /** Client date of birth — ISO date YYYY-MM-DD */
+  dateOfBirth?: string | null;
   notes?: string | null;
   caseType?: string | null;
   status: CaseStatus;
