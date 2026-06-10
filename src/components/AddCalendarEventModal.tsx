@@ -320,11 +320,16 @@ export function AddCalendarEventModal({
             ? addDeadlineEndDate.trim().slice(0, 10)
             : null,
       });
+      const extraIds = [...new Set(addExtraInviteeRowIds.filter(Boolean))];
+      const withInvitees: typeof draft = {
+        ...draft,
+        ...(extraIds.length ? { extraInternalContactIds: extraIds } : {}),
+      };
 
-      await saveEvent(supabase, caseId, draft);
+      await saveEvent(supabase, caseId, withInvitees);
 
-      const calDesc = googleCalendarDescription(draft);
-      const syncGc = normalizeGoogleCalendarInviteColorId(draft.googleColorId ?? undefined);
+      const calDesc = googleCalendarDescription(withInvitees);
+      const syncGc = normalizeGoogleCalendarInviteColorId(withInvitees.googleColorId ?? undefined);
       const calRes = await postCalendarSync(
         {
           action: "create",
@@ -332,21 +337,21 @@ export function AddCalendarEventModal({
           sourceLabel: "Manual event",
           events: [
             {
-              title: draft.title,
-              date: draft.date,
+              title: withInvitees.title,
+              date: withInvitees.date,
               description: calDesc,
-              reminderMinutes: draft.remindersMinutes,
-              startDateTime: draft.startDateTime ?? undefined,
-              endDateTime: draft.endDateTime ?? undefined,
-              scheduleKind: draft.scheduleKind,
-              ...(draft.zoomLink?.trim() ? { location: draft.zoomLink.trim() } : {}),
+              reminderMinutes: withInvitees.remindersMinutes,
+              startDateTime: withInvitees.startDateTime ?? undefined,
+              endDateTime: withInvitees.endDateTime ?? undefined,
+              scheduleKind: withInvitees.scheduleKind,
+              ...(withInvitees.zoomLink?.trim() ? { location: withInvitees.zoomLink.trim() } : {}),
               ...(syncGc != null
                 ? { googleColorId: syncGc }
-                : draft.googleColorId === null
+                : withInvitees.googleColorId === null
                   ? { googleColorId: null }
                   : {}),
-              ...(!draft.startDateTime && draft.deadlineEndDate
-                ? { deadlineEndDate: draft.deadlineEndDate }
+              ...(!withInvitees.startDateTime && withInvitees.deadlineEndDate
+                ? { deadlineEndDate: withInvitees.deadlineEndDate }
                 : {}),
             },
           ],
@@ -363,10 +368,10 @@ export function AddCalendarEventModal({
 
       const ge = calJson.googleEventIds?.[0];
       const map = calJson.googleEventIdMaps?.[0];
-      let saved = draft;
+      let saved = withInvitees;
       if (ge) {
         saved = {
-          ...draft,
+          ...withInvitees,
           googleEventId: ge,
           ...(map && Object.keys(map).length ? { googleCalendarEventIdsByEmail: map } : {}),
         };

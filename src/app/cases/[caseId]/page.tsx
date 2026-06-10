@@ -10,6 +10,7 @@ import { getBrowserSupabase } from "@/lib/supabase/singleton";
 import { caseDisplayName } from "@/lib/case-display";
 import { buildCalendarBatches, googleCalendarDescription, hasGoogleCalendarSync } from "@/lib/calendar-payload";
 import { isBackfillNonSyncEvent } from "@/lib/calendar-gap-sync";
+import { attendeeEmailsForEvent, canManageEventAttendees, contactNamesForIds } from "@/lib/event-attendees";
 import { postCalendarSync } from "@/lib/calendar-client";
 import { CALENDAR_TIMEZONE, defaultEndIso } from "@/lib/event-factory";
 import {
@@ -50,6 +51,7 @@ import type {
   EventScheduleKind,
 } from "@/lib/types";
 import { AddCalendarEventModal } from "@/components/AddCalendarEventModal";
+import { EventAttendeesModal } from "@/components/EventAttendeesModal";
 import {
   FederalHolidayBlockedNotice,
   FederalHolidayDateInput,
@@ -239,6 +241,7 @@ export default function CaseDetailPage() {
   const [verifyBusy, setVerifyBusy] = useState(false);
   const [verifyResult, setVerifyResult] = useState<VerifyResponse | null>(null);
   const [creatingGoogleInviteId, setCreatingGoogleInviteId] = useState<string | null>(null);
+  const [addingPeopleTo, setAddingPeopleTo] = useState<CalendarEvent | null>(null);
   const [editHolidayDateMsg, setEditHolidayDateMsg] = useState<string | null>(null);
   const [editHolidayEndMsg, setEditHolidayEndMsg] = useState<string | null>(null);
   const { holidays } = useFederalHolidays();
@@ -378,14 +381,7 @@ export default function CaseDetailPage() {
         return;
       }
       const b = batches[0];
-      const assigned = c.assignedContactIds ?? [];
-      const attendeeEmails = Array.from(
-        new Set(
-          assigned
-            .map((id) => contacts.find((ct) => ct.id === id)?.email)
-            .filter((e): e is string => Boolean(e))
-        )
-      );
+      const attendeeEmails = attendeeEmailsForEvent(c, latest, contacts);
       const displayName = caseDisplayName(c);
       const res = await postCalendarSync(
         {
@@ -1446,6 +1442,12 @@ export default function CaseDetailPage() {
                         <span className="font-medium text-text-muted">Attendees:</span> {ev.externalAttendeesText}
                       </p>
                     )}
+                    {(ev.extraInternalContactIds?.length ?? 0) > 0 && (
+                      <p className="mt-0.5 text-xs text-text-dim">
+                        <span className="font-medium text-text-muted">Also invited:</span>{" "}
+                        {contactNamesForIds(ev.extraInternalContactIds ?? [], contacts).join(", ")}
+                      </p>
+                    )}
                     {ev.zoomLink?.trim() && (
                       <p className="mt-1">
                         <a
@@ -1470,6 +1472,16 @@ export default function CaseDetailPage() {
                         Complete
                       </label>
                       <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={() => setEditing(calendarEventForEdit(ev))}>Edit</button>
+                      {canManageEventAttendees(c, ev).ok && (
+                        <button
+                          type="button"
+                          className="text-xs font-medium text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                          disabled={busy}
+                          onClick={() => setAddingPeopleTo(ev)}
+                        >
+                          Add people
+                        </button>
+                      )}
                       {c.status === "active" &&
                         !isGoogleIcsMirrorEvent(ev) &&
                         !isBackfillNonSyncEvent(ev) &&
@@ -1506,6 +1518,20 @@ export default function CaseDetailPage() {
           idToken={idToken}
           user={{ id: user.id, email: user.email }}
           onSaved={({ title }) => flash(`Added "${title}" to the case and calendar`)}
+        />
+      )}
+
+      {addingPeopleTo && c && user && (
+        <EventAttendeesModal
+          open
+          onClose={() => setAddingPeopleTo(null)}
+          caseRecord={c}
+          event={addingPeopleTo}
+          contacts={contacts}
+          idToken={idToken}
+          user={{ id: user.id, email: user.email }}
+          onSaved={(message) => flash(message)}
+          onError={(message) => setMsg(message)}
         />
       )}
 
