@@ -8,6 +8,7 @@ import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
 import { caseDisplayName } from "@/lib/case-display";
+import { slackChannelLabel, slackChannelUrl } from "@/lib/slack-channel";
 import { buildCalendarBatches, googleCalendarDescription, hasGoogleCalendarSync } from "@/lib/calendar-payload";
 import { isBackfillNonSyncEvent } from "@/lib/calendar-gap-sync";
 import { attendeeEmailsForEvent, canManageEventAttendees, contactNamesForIds } from "@/lib/event-attendees";
@@ -34,6 +35,7 @@ import {
   deleteCaseCascade,
   deleteEvent,
   fetchEventsForCase,
+  fetchSlackChannelForCase,
   logActivity,
   saveEvent,
   subscribeCase,
@@ -44,6 +46,7 @@ import {
 import type {
   CalendarEvent,
   Case,
+  CaseSlackChannel,
   CaseStatus,
   Contact,
   EventCategory,
@@ -242,6 +245,7 @@ export default function CaseDetailPage() {
   const [verifyResult, setVerifyResult] = useState<VerifyResponse | null>(null);
   const [creatingGoogleInviteId, setCreatingGoogleInviteId] = useState<string | null>(null);
   const [addingPeopleTo, setAddingPeopleTo] = useState<CalendarEvent | null>(null);
+  const [slackChannel, setSlackChannel] = useState<CaseSlackChannel | null>(null);
   const [editHolidayDateMsg, setEditHolidayDateMsg] = useState<string | null>(null);
   const [editHolidayEndMsg, setEditHolidayEndMsg] = useState<string | null>(null);
   const { holidays } = useFederalHolidays();
@@ -279,6 +283,30 @@ export default function CaseDetailPage() {
   useEffect(() => {
     if (!loading && supabaseReady && !user) router.replace("/login");
   }, [user, loading, supabaseReady, router]);
+
+  useEffect(() => {
+    if (!supabaseReady || !user || !c) {
+      setSlackChannel(null);
+      return;
+    }
+    const num = c.caseNumber?.trim() || c.causeNumber?.trim();
+    if (!num) {
+      setSlackChannel(null);
+      return;
+    }
+    let cancelled = false;
+    const supabase = getBrowserSupabase();
+    void fetchSlackChannelForCase(supabase, c)
+      .then((row) => {
+        if (!cancelled) setSlackChannel(row);
+      })
+      .catch(() => {
+        if (!cancelled) setSlackChannel(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [c, user, supabaseReady]);
 
   /** Start/end times on the event date while “Edit event” is open (date is the single field above). */
   const [pickStartTime, setPickStartTime] = useState("");
@@ -1067,6 +1095,19 @@ export default function CaseDetailPage() {
               <>
                 <span className="text-border-strong">·</span>
                 <span>Incident {c.dateOfIncident}</span>
+              </>
+            )}
+            {slackChannel && (
+              <>
+                <span className="text-border-strong">·</span>
+                <a
+                  href={slackChannelUrl(slackChannel.slackChannelId)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium text-primary hover:underline"
+                >
+                  Slack {slackChannelLabel(slackChannel.slackChannelName, slackChannel.slackChannelId)}
+                </a>
               </>
             )}
             {c.status === "active" ? (

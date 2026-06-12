@@ -5,6 +5,7 @@ import type {
   CalendarEvent,
   Case,
   Contact,
+  CaseSlackChannel,
   EventCategory,
   EventKind,
 } from "@/lib/types";
@@ -202,6 +203,38 @@ export async function fetchCase(
   if (error) throw error;
   if (!data) return null;
   return caseFromRow(data as Record<string, unknown>);
+}
+
+function slackChannelFromRow(r: Record<string, unknown>): CaseSlackChannel {
+  return {
+    caseNumber: String(r.case_number ?? ""),
+    slackChannelId: String(r.slack_channel_id ?? ""),
+    slackChannelName: (r.slack_channel_name as string | null) ?? null,
+  };
+}
+
+/** Lookup Slack channel for a case by `case_number` (tries caseNumber then causeNumber). */
+export async function fetchSlackChannelForCase(
+  supabase: SupabaseClient,
+  caseRecord: Pick<Case, "caseNumber" | "causeNumber">
+): Promise<CaseSlackChannel | null> {
+  const candidates = Array.from(
+    new Set(
+      [caseRecord.caseNumber?.trim(), caseRecord.causeNumber?.trim()].filter(
+        (v): v is string => Boolean(v)
+      )
+    )
+  );
+  for (const caseNumber of candidates) {
+    const { data, error } = await supabase
+      .from("cases_slack_channels")
+      .select("case_number, slack_channel_id, slack_channel_name")
+      .eq("case_number", caseNumber)
+      .maybeSingle();
+    if (error) throw error;
+    if (data) return slackChannelFromRow(data as Record<string, unknown>);
+  }
+  return null;
 }
 
 export function subscribeCase(

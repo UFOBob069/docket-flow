@@ -133,6 +133,13 @@ export interface Case {
   updatedAt: number;
 }
 
+/** Row from `cases_slack_channels` keyed by firm case number. */
+export type CaseSlackChannel = {
+  caseNumber: string;
+  slackChannelId: string;
+  slackChannelName: string | null;
+};
+
 /** Court/docket date (usually all-day) vs internal time-based meeting. */
 export type EventScheduleKind = "deadline" | "meeting";
 
