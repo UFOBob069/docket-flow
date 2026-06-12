@@ -10,6 +10,25 @@ export function isValidNumericCaseNumber(value: string): boolean {
   return v.length > 0 && /^\d+$/.test(v);
 }
 
+/** Keys to match `cases_slack_channels.case_number` (exact, digits-only, no leading zeros). */
+export function caseNumberLookupKeys(
+  caseRecord: Pick<{ caseNumber?: string | null; causeNumber?: string | null }, "caseNumber" | "causeNumber">
+): string[] {
+  const keys = new Set<string>();
+  for (const raw of [caseRecord.caseNumber, caseRecord.causeNumber]) {
+    const t = raw?.trim();
+    if (!t) continue;
+    keys.add(t);
+    const digits = t.replace(/\D/g, "");
+    if (digits) {
+      keys.add(digits);
+      const n = Number.parseInt(digits, 10);
+      if (Number.isFinite(n)) keys.add(String(n));
+    }
+  }
+  return [...keys];
+}
+
 /** Display title for lists and headers (supports legacy docs without caseNumber). */
 export function caseDisplayName(c: Case): string {
   const num = c.caseNumber?.trim() || c.causeNumber?.trim() || "";

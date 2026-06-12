@@ -300,7 +300,8 @@ export default function CaseDetailPage() {
       .then((row) => {
         if (!cancelled) setSlackChannel(row);
       })
-      .catch(() => {
+      .catch((e) => {
+        console.warn("[case slack lookup]", e);
         if (!cancelled) setSlackChannel(null);
       });
     return () => {
@@ -1124,6 +1125,16 @@ export default function CaseDetailPage() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
+          {slackChannel && (
+            <a
+              href={slackChannelUrl(slackChannel.slackChannelId)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center rounded-lg border border-[#611f69]/30 bg-[#611f69]/10 px-4 py-1.5 text-sm font-medium text-[#611f69] shadow-sm transition hover:bg-[#611f69]/20"
+            >
+              Slack {slackChannelLabel(slackChannel.slackChannelName, slackChannel.slackChannelId)}
+            </a>
+          )}
           {c.status === "archived" ? (
             <span
               className="inline-flex cursor-not-allowed items-center justify-center rounded-lg border border-border bg-surface-alt px-4 py-1.5 text-sm font-medium text-text-dim"

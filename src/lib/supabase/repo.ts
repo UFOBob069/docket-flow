@@ -9,6 +9,7 @@ import type {
   EventCategory,
   EventKind,
 } from "@/lib/types";
+import { caseNumberLookupKeys } from "@/lib/case-display";
 import { normalizeGoogleCalendarInviteColorId } from "@/lib/google-calendar-invite-colors";
 
 type Unsubscribe = () => void;
@@ -213,28 +214,30 @@ function slackChannelFromRow(r: Record<string, unknown>): CaseSlackChannel {
   };
 }
 
-/** Lookup Slack channel for a case by `case_number` (tries caseNumber then causeNumber). */
+/** Lookup Slack channel for a case by `case_number` (tries normalized case number variants). */
 export async function fetchSlackChannelForCase(
   supabase: SupabaseClient,
   caseRecord: Pick<Case, "caseNumber" | "causeNumber">
 ): Promise<CaseSlackChannel | null> {
-  const candidates = Array.from(
-    new Set(
-      [caseRecord.caseNumber?.trim(), caseRecord.causeNumber?.trim()].filter(
-        (v): v is string => Boolean(v)
-      )
-    )
+  const candidates = caseNumberLookupKeys(caseRecord);
+  if (candidates.length === 0) return null;
+
+  const { data, error } = await supabase
+    .from("cases_slack_channels")
+    .select("case_number, slack_channel_id, slack_channel_name")
+    .in("case_number", candidates)
+    .limit(10);
+  if (error) throw error;
+  if (!data?.length) return null;
+
+  const byKey = new Map(
+    data.map((row) => [String((row as { case_number: string }).case_number), row])
   );
-  for (const caseNumber of candidates) {
-    const { data, error } = await supabase
-      .from("cases_slack_channels")
-      .select("case_number, slack_channel_id, slack_channel_name")
-      .eq("case_number", caseNumber)
-      .maybeSingle();
-    if (error) throw error;
-    if (data) return slackChannelFromRow(data as Record<string, unknown>);
+  for (const key of candidates) {
+    const row = byKey.get(key);
+    if (row) return slackChannelFromRow(row as Record<string, unknown>);
   }
-  return null;
+  return slackChannelFromRow(data[0] as Record<string, unknown>);
 }
 
 export function subscribeCase(
