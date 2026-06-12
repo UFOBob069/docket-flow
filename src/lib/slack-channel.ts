@@ -1,7 +1,9 @@
-/** Open Slack channel in app or web (works without workspace subdomain in env). */
+const SLACK_WORKSPACE = "ramosjames";
+
+/** Firm Slack workspace channel URL (opens in browser or Slack app). */
 export function slackChannelUrl(channelId: string): string {
   const id = channelId.trim();
-  return `https://slack.com/app_redirect?channel=${encodeURIComponent(id)}`;
+  return `https://${SLACK_WORKSPACE}.slack.com/archives/${encodeURIComponent(id)}`;
 }
 
 export function slackChannelLabel(name: string | null | undefined, channelId: string): string {
