@@ -10,7 +10,7 @@ export function isValidNumericCaseNumber(value: string): boolean {
   return v.length > 0 && /^\d+$/.test(v);
 }
 
-/** Keys to match `cases_slack_channels.case_number` (exact, digits-only, no leading zeros). */
+/** Keys to match `case_slack_channels.case_number` (exact, digits-only, no leading zeros). */
 export function caseNumberLookupKeys(
   caseRecord: Pick<{ caseNumber?: string | null; causeNumber?: string | null }, "caseNumber" | "causeNumber">
 ): string[] {

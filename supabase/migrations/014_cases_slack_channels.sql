@@ -1,5 +1,4 @@
--- Slack channel lookup by firm case number (populated externally; read-only in app).
-
+-- Legacy / unused: firm data lives in `case_slack_channels` (singular). See 015.
 create table if not exists public.cases_slack_channels (
   case_number text primary key,
   slack_channel_id text not null,

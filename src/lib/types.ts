@@ -133,7 +133,7 @@ export interface Case {
   updatedAt: number;
 }
 
-/** Row from `cases_slack_channels` keyed by firm case number. */
+/** Row from `case_slack_channels` keyed by firm case number. */
 export type CaseSlackChannel = {
   caseNumber: string;
   slackChannelId: string;

@@ -223,7 +223,7 @@ export async function fetchSlackChannelForCase(
   if (candidates.length === 0) return null;
 
   const { data, error } = await supabase
-    .from("cases_slack_channels")
+    .from("case_slack_channels")
     .select("case_number, slack_channel_id, slack_channel_name")
     .in("case_number", candidates)
     .limit(10);
