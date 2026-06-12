@@ -9,7 +9,7 @@ import type {
   EventCategory,
   EventKind,
 } from "@/lib/types";
-import { caseNumberLookupKeys } from "@/lib/case-display";
+import { caseDisplayName, caseNumberLookupKeys } from "@/lib/case-display";
 import { normalizeGoogleCalendarInviteColorId } from "@/lib/google-calendar-invite-colors";
 
 type Unsubscribe = () => void;
@@ -204,6 +204,26 @@ export async function fetchCase(
   if (error) throw error;
   if (!data) return null;
   return caseFromRow(data as Record<string, unknown>);
+}
+
+/** Find an existing case whose `case_number` or `cause_number` matches (normalized variants). */
+export async function findCaseByCaseNumber(
+  supabase: SupabaseClient,
+  caseNumber: string
+): Promise<Case | null> {
+  const trimmed = caseNumber.trim();
+  if (!trimmed) return null;
+  const keys = caseNumberLookupKeys({ caseNumber: trimmed, causeNumber: trimmed });
+  if (!keys.length) return null;
+
+  const { data, error } = await supabase
+    .from("cases")
+    .select("*")
+    .or(`case_number.in.(${keys.join(",")}),cause_number.in.(${keys.join(",")})`)
+    .limit(1);
+  if (error) throw error;
+  if (!data?.length) return null;
+  return caseFromRow(data[0] as Record<string, unknown>);
 }
 
 function slackChannelFromRow(r: Record<string, unknown>): CaseSlackChannel {
@@ -539,6 +559,15 @@ export async function createCase(
     "id" | "ownerId" | "createdAt" | "updatedAt" | "assignedContactIds" | "status"
   > & { assignedContactIds?: string[] }
 ): Promise<string> {
+  const cn = input.caseNumber?.trim();
+  if (cn) {
+    const existing = await findCaseByCaseNumber(supabase, cn);
+    if (existing) {
+      const num = existing.caseNumber?.trim() || existing.causeNumber?.trim() || cn;
+      throw new Error(`Case number ${num} already exists (${caseDisplayName(existing)}).`);
+    }
+  }
+
   const now = Date.now();
   const row = clean({
     user_id: ownerId,

@@ -7,13 +7,23 @@ import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
 import { CASE_TYPE_OPTIONS, isCaseType } from "@/lib/case-types";
-import { digitsOnlyCaseNumberInput, isValidNumericCaseNumber } from "@/lib/case-display";
+import {
+  caseDisplayName,
+  digitsOnlyCaseNumberInput,
+  isValidNumericCaseNumber,
+} from "@/lib/case-display";
 import { createSolMilestoneEvents } from "@/lib/event-factory";
 import { buildSolMilestoneSpecs } from "@/lib/sol-milestones";
-import { createCase, logActivity, saveEvent, subscribeContacts } from "@/lib/supabase/repo";
+import {
+  createCase,
+  findCaseByCaseNumber,
+  logActivity,
+  saveEvent,
+  subscribeContacts,
+} from "@/lib/supabase/repo";
 import { adjustSolWeekendToFriday, statuteLimitDateIsoForCalendar } from "@/lib/sol";
 import { DEFAULT_REMINDERS } from "@/lib/reminder-presets";
-import type { Contact } from "@/lib/types";
+import type { Case, Contact } from "@/lib/types";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { ReminderMinutesEditor } from "@/components/ReminderMinutesEditor";
 import { useHydrated } from "@/hooks/useHydrated";
@@ -42,6 +52,8 @@ export default function NewCasePage() {
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [duplicateCase, setDuplicateCase] = useState<Case | null>(null);
+  const [checkingCaseNumber, setCheckingCaseNumber] = useState(false);
 
   useEffect(() => {
     if (!supabaseReady || loading || !user) return;
@@ -60,6 +72,36 @@ export default function NewCasePage() {
     }
     setSolDate(statuteLimitDateIsoForCalendar(dateOfIncident, 2));
   }, [dateOfIncident]);
+
+  useEffect(() => {
+    const cn = caseNumber.trim();
+    if (!supabaseReady || !isValidNumericCaseNumber(cn)) {
+      setDuplicateCase(null);
+      setCheckingCaseNumber(false);
+      return;
+    }
+
+    let cancelled = false;
+    setCheckingCaseNumber(true);
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const supabase = getBrowserSupabase();
+          const existing = await findCaseByCaseNumber(supabase, cn);
+          if (!cancelled) setDuplicateCase(existing);
+        } catch {
+          if (!cancelled) setDuplicateCase(null);
+        } finally {
+          if (!cancelled) setCheckingCaseNumber(false);
+        }
+      })();
+    }, 400);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [caseNumber, supabaseReady]);
 
   const solMilestonePreview = useMemo(() => {
     const doi = dateOfIncident.trim();
@@ -92,6 +134,12 @@ export default function NewCasePage() {
     }
     if (!isValidNumericCaseNumber(cn)) {
       setErr("Case number must contain digits only.");
+      return;
+    }
+    if (duplicateCase) {
+      const num =
+        duplicateCase.caseNumber?.trim() || duplicateCase.causeNumber?.trim() || cn;
+      setErr(`Case number ${num} already exists (${caseDisplayName(duplicateCase)}).`);
       return;
     }
     if (!attorneyId || !paralegalId) {
@@ -244,7 +292,20 @@ export default function NewCasePage() {
                 autoComplete="off"
                 placeholder="e.g. 240123"
                 required
+                aria-invalid={duplicateCase ? true : undefined}
               />
+              {checkingCaseNumber && isValidNumericCaseNumber(caseNumber.trim()) && (
+                <p className="mt-1 text-xs text-text-dim">Checking case number…</p>
+              )}
+              {duplicateCase && (
+                <p className="mt-1 text-xs text-danger" role="alert">
+                  Case number{" "}
+                  {duplicateCase.caseNumber?.trim() ||
+                    duplicateCase.causeNumber?.trim() ||
+                    caseNumber.trim()}{" "}
+                  already exists ({caseDisplayName(duplicateCase)}).
+                </p>
+              )}
             </div>
             <div>
               <Label required>Client name</Label>
@@ -425,7 +486,13 @@ export default function NewCasePage() {
               </div>
             )}
 
-            <Button type="submit" className="w-full" disabled={busy} variant="pink" size="lg">
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={busy || checkingCaseNumber || Boolean(duplicateCase)}
+              variant="pink"
+              size="lg"
+            >
               {busy ? "Creating…" : "Create case"}
             </Button>
           </form>
