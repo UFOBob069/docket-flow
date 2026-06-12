@@ -761,6 +761,37 @@ export async function logActivity(
   });
   const { error } = await supabase.from("activity_log").insert(row);
   if (error) throw error;
+
+  if (entry.caseId?.trim() && typeof window !== "undefined") {
+    void notifySlackForActivity(supabase, entry);
+  }
+}
+
+async function notifySlackForActivity(
+  supabase: SupabaseClient,
+  entry: Omit<ActivityEntry, "id" | "createdAt">
+): Promise<void> {
+  try {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) return;
+    await fetch("/api/slack/activity", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        caseId: entry.caseId,
+        caseName: entry.caseName,
+        action: entry.action,
+        description: entry.description,
+        userEmail: entry.userEmail,
+      }),
+    });
+  } catch (e) {
+    console.warn("[logActivity] Slack notify failed", e);
+  }
 }
 
 /** Firm-wide activity feed (`userId` unused). */

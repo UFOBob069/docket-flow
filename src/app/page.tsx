@@ -14,6 +14,7 @@ import {
   subscribeCaseEventsFirm,
   subscribeContacts,
 } from "@/lib/supabase/repo";
+import { ACTIVITY_ACTION_LABELS } from "@/lib/activity-labels";
 import { caseMatchesAssignedRole } from "@/lib/case-assigned-filter";
 import { EVENT_KIND_FILTER_OPTIONS } from "@/lib/one-off-events";
 import type { ActivityEntry, CalendarEvent, Case, Contact, EventKind } from "@/lib/types";
@@ -164,19 +165,6 @@ function DeadlineSection({
   );
 }
 
-const ACTION_LABELS: Record<string, string> = {
-  case_created: "created case",
-  case_archived: "archived case",
-  case_activated: "reactivated case",
-  case_deleted: "deleted case",
-  event_created: "created events",
-  event_edited: "edited event",
-  event_deleted: "deleted event",
-  events_bulk_deleted: "bulk deleted events",
-  events_bulk_rescheduled: "bulk rescheduled events",
-  contacts_reassigned: "reassigned contacts",
-};
-
 function ActivityFeed({ entries }: { entries: ActivityEntry[] }) {
   if (!entries.length) return null;
   return (
@@ -190,7 +178,7 @@ function ActivityFeed({ entries }: { entries: ActivityEntry[] }) {
               <div className="min-w-0 flex-1">
                 <p className="text-sm text-text">
                   <span className="font-medium">{a.userEmail.split("@")[0]}</span>
-                  {" "}{ACTION_LABELS[a.action] ?? a.action}
+                  {" "}{ACTIVITY_ACTION_LABELS[a.action] ?? a.action}
                   {a.caseName && (
                     <>
                       {" "}
