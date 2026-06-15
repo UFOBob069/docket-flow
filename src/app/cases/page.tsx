@@ -74,6 +74,20 @@ function compareCasesByCaseNumber(a: Case, b: Case): number {
   return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
 }
 
+type CaseStatusFilter = "active" | "closed" | "all";
+
+const CASE_STATUS_FILTER_OPTIONS: { value: CaseStatusFilter; label: string }[] = [
+  { value: "active", label: "Active" },
+  { value: "closed", label: "Closed" },
+  { value: "all", label: "All" },
+];
+
+function caseMatchesStatusFilter(c: Case, filter: CaseStatusFilter): boolean {
+  if (filter === "all") return true;
+  if (filter === "closed") return c.status === "archived";
+  return c.status === "active";
+}
+
 export default function CasesListPage() {
   const router = useRouter();
   const hydrated = useHydrated();
@@ -84,6 +98,7 @@ export default function CasesListPage() {
   const [attorneyFilterIds, setAttorneyFilterIds] = useState<string[]>([]);
   const [paralegalFilterIds, setParalegalFilterIds] = useState<string[]>([]);
   const [eventKindFilters, setEventKindFilters] = useState<EventKind[]>([]);
+  const [statusFilter, setStatusFilter] = useState<CaseStatusFilter>("active");
   const [showFiltersDrawer, setShowFiltersDrawer] = useState(false);
   const [showDateModal, setShowDateModal] = useState(false);
 
@@ -180,7 +195,7 @@ export default function CasesListPage() {
   };
 
   const filtered = useMemo(() => {
-    let list = cases;
+    let list = cases.filter((c) => caseMatchesStatusFilter(c, statusFilter));
     list = list.filter((c) => caseMatchesAssignedRole(c, attorneyFilterIds, "attorney", contactById));
     list = list.filter((c) => caseMatchesAssignedRole(c, paralegalFilterIds, "paralegal", contactById));
     if (eventKindFilters.length) {
@@ -220,6 +235,7 @@ export default function CasesListPage() {
     return [...list].sort(compareCasesByCaseNumber);
   }, [
     cases,
+    statusFilter,
     search,
     attorneyFilterIds,
     paralegalFilterIds,
@@ -232,25 +248,46 @@ export default function CasesListPage() {
   ]);
 
   const activeFilterCount =
+    (statusFilter !== "active" ? 1 : 0) +
     (attorneyFilterIds.length ? 1 : 0) +
     (paralegalFilterIds.length ? 1 : 0) +
     (eventKindFilters.length ? 1 : 0) +
     (useEventDateFilter ? 1 : 0);
 
   function clearAllFilters() {
+    setStatusFilter("active");
     setAttorneyFilterIds([]);
     setParalegalFilterIds([]);
     setEventKindFilters([]);
     resetDateFilter();
   }
 
+  const hasNonDefaultStatusFilter = statusFilter !== "active";
+
   const hasFilters = Boolean(
+    hasNonDefaultStatusFilter ||
+      attorneyFilterIds.length ||
+      paralegalFilterIds.length ||
+      search.trim() ||
+      eventKindFilters.length ||
+      useEventDateFilter
+  );
+
+  const hasSecondaryFilters = Boolean(
     attorneyFilterIds.length ||
       paralegalFilterIds.length ||
       search.trim() ||
       eventKindFilters.length ||
       useEventDateFilter
   );
+
+  const casesSubtitle = hasSecondaryFilters
+    ? `${filtered.length} shown · ${cases.length} total`
+    : statusFilter === "active"
+      ? `${filtered.length} active case${filtered.length !== 1 ? "s" : ""}`
+      : statusFilter === "closed"
+        ? `${filtered.length} closed case${filtered.length !== 1 ? "s" : ""}`
+        : `${cases.length} case${cases.length !== 1 ? "s" : ""}`;
 
   if (!hydrated) return <PageSkeleton />;
 
@@ -268,9 +305,7 @@ export default function CasesListPage() {
     <PageWrapper>
       <h1 className="text-2xl font-semibold tracking-tight text-text lg:text-3xl">Cases</h1>
       <p className="mt-1 text-sm text-text-muted">
-        {hasFilters
-          ? `${filtered.length} shown · ${cases.length} total`
-          : `${cases.length} case${cases.length !== 1 ? "s" : ""}`}
+        {casesSubtitle}
         {useEventDateFilter && (
           <span className="text-text-dim">
             {" "}
@@ -302,12 +337,22 @@ export default function CasesListPage() {
       </div>
 
       {Boolean(
-        attorneyFilterIds.length ||
+        hasNonDefaultStatusFilter ||
+          attorneyFilterIds.length ||
           paralegalFilterIds.length ||
           eventKindFilters.length ||
           useEventDateFilter
       ) && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
+          {hasNonDefaultStatusFilter && (
+            <button
+              type="button"
+              onClick={() => setStatusFilter("active")}
+              className="rounded-full bg-surface-alt px-2.5 py-1 text-xs text-text"
+            >
+              {statusFilter === "closed" ? "Closed" : "All statuses"} ×
+            </button>
+          )}
           {attorneyFilterIds.map((id) => (
             <button
               key={`att-${id}`}
@@ -460,6 +505,30 @@ export default function CasesListPage() {
             </button>
           </div>
           <div className="space-y-4">
+            <div>
+              <Label>Case status</Label>
+              <div
+                className="mt-1.5 flex rounded-xl border border-border bg-surface-alt p-1"
+                role="group"
+                aria-label="Case status"
+              >
+                {CASE_STATUS_FILTER_OPTIONS.map(({ value, label }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={statusFilter === value}
+                    onClick={() => setStatusFilter(value)}
+                    className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition ${
+                      statusFilter === value
+                        ? "bg-white text-text shadow-sm"
+                        : "text-text-muted hover:text-text"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <FilterMultiSelect
               label="Attorneys"
               options={attorneyOptions}
@@ -518,7 +587,7 @@ export default function CasesListPage() {
             <p className="mt-6 text-center text-sm text-text-muted">
               {search.trim()
                 ? `No cases match your search.`
-                : attorneyFilterIds.length || paralegalFilterIds.length || eventKindFilters.length || useEventDateFilter
+                : hasFilters
                   ? "No cases match these filters."
                   : "No cases match your filters."}
             </p>
