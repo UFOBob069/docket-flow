@@ -9,6 +9,15 @@ import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
 import { caseMatchesAssignedRole } from "@/lib/case-assigned-filter";
 import {
+  CASE_STAGE_FILTER_OPTIONS,
+  caseMatchesStageFilters,
+  caseStageFilterLabel,
+  isTrackerPipelineActive,
+  isTrackerPipelineClosed,
+  type CaseTrackerPipeline,
+} from "@/lib/case-tracker-pipeline";
+import {
+  fetchCaseTrackerPipelineByCaseIds,
   fetchCasesWithEvents,
   subscribeCaseEventsFirm,
   subscribeCases,
@@ -82,10 +91,13 @@ const CASE_STATUS_FILTER_OPTIONS: { value: CaseStatusFilter; label: string }[] =
   { value: "all", label: "All" },
 ];
 
-function caseMatchesStatusFilter(c: Case, filter: CaseStatusFilter): boolean {
+function caseMatchesPipelineStatusFilter(
+  pipeline: CaseTrackerPipeline | undefined,
+  filter: CaseStatusFilter
+): boolean {
   if (filter === "all") return true;
-  if (filter === "closed") return c.status === "archived";
-  return c.status === "active";
+  if (filter === "closed") return isTrackerPipelineClosed(pipeline);
+  return isTrackerPipelineActive(pipeline);
 }
 
 export default function CasesListPage() {
@@ -98,7 +110,11 @@ export default function CasesListPage() {
   const [attorneyFilterIds, setAttorneyFilterIds] = useState<string[]>([]);
   const [paralegalFilterIds, setParalegalFilterIds] = useState<string[]>([]);
   const [eventKindFilters, setEventKindFilters] = useState<EventKind[]>([]);
+  const [stageFilters, setStageFilters] = useState<string[]>([]);
   const [statusFilter, setStatusFilter] = useState<CaseStatusFilter>("active");
+  const [pipelineByCaseId, setPipelineByCaseId] = useState<Map<string, CaseTrackerPipeline>>(
+    () => new Map()
+  );
   const [showFiltersDrawer, setShowFiltersDrawer] = useState(false);
   const [showDateModal, setShowDateModal] = useState(false);
 
@@ -120,6 +136,16 @@ export default function CasesListPage() {
         const supabase = getBrowserSupabase();
         const rows = await fetchCasesWithEvents(supabase, user.id);
         setBundled(rows);
+        try {
+          const pipeline = await fetchCaseTrackerPipelineByCaseIds(
+            supabase,
+            rows.map((r) => r.case.id)
+          );
+          setPipelineByCaseId(pipeline);
+        } catch (e) {
+          console.warn("[cases] fetchCaseTrackerPipeline", e);
+          setPipelineByCaseId(new Map());
+        }
       } catch (e) {
         console.warn("[cases] fetchCasesWithEvents", e);
       }
@@ -195,7 +221,12 @@ export default function CasesListPage() {
   };
 
   const filtered = useMemo(() => {
-    let list = cases.filter((c) => caseMatchesStatusFilter(c, statusFilter));
+    let list = cases.filter((c) =>
+      caseMatchesPipelineStatusFilter(pipelineByCaseId.get(c.id), statusFilter)
+    );
+    list = list.filter((c) =>
+      caseMatchesStageFilters(pipelineByCaseId.get(c.id), stageFilters)
+    );
     list = list.filter((c) => caseMatchesAssignedRole(c, attorneyFilterIds, "attorney", contactById));
     list = list.filter((c) => caseMatchesAssignedRole(c, paralegalFilterIds, "paralegal", contactById));
     if (eventKindFilters.length) {
@@ -235,7 +266,9 @@ export default function CasesListPage() {
     return [...list].sort(compareCasesByCaseNumber);
   }, [
     cases,
+    pipelineByCaseId,
     statusFilter,
+    stageFilters,
     search,
     attorneyFilterIds,
     paralegalFilterIds,
@@ -247,8 +280,18 @@ export default function CasesListPage() {
     timelineEnd,
   ]);
 
+  const pipelineActiveCount = useMemo(
+    () => cases.filter((c) => isTrackerPipelineActive(pipelineByCaseId.get(c.id))).length,
+    [cases, pipelineByCaseId]
+  );
+  const pipelineClosedCount = useMemo(
+    () => cases.filter((c) => isTrackerPipelineClosed(pipelineByCaseId.get(c.id))).length,
+    [cases, pipelineByCaseId]
+  );
+
   const activeFilterCount =
     (statusFilter !== "active" ? 1 : 0) +
+    (stageFilters.length ? 1 : 0) +
     (attorneyFilterIds.length ? 1 : 0) +
     (paralegalFilterIds.length ? 1 : 0) +
     (eventKindFilters.length ? 1 : 0) +
@@ -256,6 +299,7 @@ export default function CasesListPage() {
 
   function clearAllFilters() {
     setStatusFilter("active");
+    setStageFilters([]);
     setAttorneyFilterIds([]);
     setParalegalFilterIds([]);
     setEventKindFilters([]);
@@ -266,6 +310,7 @@ export default function CasesListPage() {
 
   const hasFilters = Boolean(
     hasNonDefaultStatusFilter ||
+      stageFilters.length ||
       attorneyFilterIds.length ||
       paralegalFilterIds.length ||
       search.trim() ||
@@ -274,7 +319,8 @@ export default function CasesListPage() {
   );
 
   const hasSecondaryFilters = Boolean(
-    attorneyFilterIds.length ||
+    stageFilters.length ||
+      attorneyFilterIds.length ||
       paralegalFilterIds.length ||
       search.trim() ||
       eventKindFilters.length ||
@@ -287,7 +333,7 @@ export default function CasesListPage() {
       ? `${filtered.length} active case${filtered.length !== 1 ? "s" : ""}`
       : statusFilter === "closed"
         ? `${filtered.length} closed case${filtered.length !== 1 ? "s" : ""}`
-        : `${cases.length} case${cases.length !== 1 ? "s" : ""}`;
+        : `${cases.length} case${cases.length !== 1 ? "s" : ""} (${pipelineActiveCount} active · ${pipelineClosedCount} closed)`;
 
   if (!hydrated) return <PageSkeleton />;
 
@@ -338,6 +384,7 @@ export default function CasesListPage() {
 
       {Boolean(
         hasNonDefaultStatusFilter ||
+          stageFilters.length ||
           attorneyFilterIds.length ||
           paralegalFilterIds.length ||
           eventKindFilters.length ||
@@ -353,6 +400,16 @@ export default function CasesListPage() {
               {statusFilter === "closed" ? "Closed" : "All statuses"} ×
             </button>
           )}
+          {stageFilters.map((stage) => (
+            <button
+              key={`stage-${stage}`}
+              type="button"
+              onClick={() => setStageFilters((prev) => prev.filter((x) => x !== stage))}
+              className="rounded-full bg-surface-alt px-2.5 py-1 text-xs text-text"
+            >
+              {stage} ×
+            </button>
+          ))}
           {attorneyFilterIds.map((id) => (
             <button
               key={`att-${id}`}
@@ -506,11 +563,14 @@ export default function CasesListPage() {
           </div>
           <div className="space-y-4">
             <div>
-              <Label>Case status</Label>
+              <Label>Pipeline status</Label>
+              <p className="mt-0.5 text-xs text-text-muted">
+                Active/closed from Case Tracker — disbursed or Disengaged/Terminated/Referred stage.
+              </p>
               <div
                 className="mt-1.5 flex rounded-xl border border-border bg-surface-alt p-1"
                 role="group"
-                aria-label="Case status"
+                aria-label="Pipeline status"
               >
                 {CASE_STATUS_FILTER_OPTIONS.map(({ value, label }) => (
                   <button
@@ -529,6 +589,13 @@ export default function CasesListPage() {
                 ))}
               </div>
             </div>
+            <FilterMultiSelect
+              label="Case stage"
+              options={CASE_STAGE_FILTER_OPTIONS}
+              selectedIds={stageFilters}
+              onChange={setStageFilters}
+              placeholder="Select stages"
+            />
             <FilterMultiSelect
               label="Attorneys"
               options={attorneyOptions}
@@ -606,6 +673,9 @@ export default function CasesListPage() {
                       deadlineInclusiveEndDate(e) < today
                   ).length;
                   const isArchived = c.status === "archived";
+                  const pipeline = pipelineByCaseId.get(c.id);
+                  const stageLabel = caseStageFilterLabel(pipeline);
+                  const pipelineClosed = isTrackerPipelineClosed(pipeline);
                   return (
                     <Link
                       key={c.id}
@@ -648,11 +718,12 @@ export default function CasesListPage() {
                             {overdueCount} overdue
                           </Badge>
                         )}
-                        {c.status === "active" ? (
-                          <Badge variant="success">active</Badge>
-                        ) : (
+                        {stageLabel && (
+                          <Badge variant="default">{stageLabel}</Badge>
+                        )}
+                        {pipelineClosed && (
                           <Badge variant="warning" className="text-[11px] font-bold uppercase tracking-wide">
-                            archived
+                            closed
                           </Badge>
                         )}
                         <svg

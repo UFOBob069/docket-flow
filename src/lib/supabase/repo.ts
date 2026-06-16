@@ -10,6 +10,7 @@ import type {
   EventKind,
 } from "@/lib/types";
 import { caseDisplayName, caseNumberLookupKeys } from "@/lib/case-display";
+import type { CaseTrackerPipeline } from "@/lib/case-tracker-pipeline";
 import { normalizeGoogleCalendarInviteColorId } from "@/lib/google-calendar-invite-colors";
 
 type Unsubscribe = () => void;
@@ -420,6 +421,54 @@ export async function fetchCasesWithEvents(
   }
 
   return cases.map((c) => ({ case: c, events: eventsByCaseId.get(c.id) ?? [] }));
+}
+
+/** Tracker stage + disbursement for pipeline active/closed filters (Case Tracker tables). */
+export async function fetchCaseTrackerPipelineByCaseIds(
+  supabase: SupabaseClient,
+  caseIds: string[]
+): Promise<Map<string, CaseTrackerPipeline>> {
+  const out = new Map<string, CaseTrackerPipeline>();
+  if (!caseIds.length) return out;
+
+  for (let i = 0; i < caseIds.length; i += CASE_IDS_IN_CHUNK) {
+    const chunk = caseIds.slice(i, i + CASE_IDS_IN_CHUNK);
+    const [entriesRes, resultsRes] = await Promise.all([
+      supabase.from("case_tracker_entries").select("case_id, case_stage").in("case_id", chunk),
+      supabase
+        .from("case_tracker_results")
+        .select("case_id, disbursed_status, check_disbursed_at")
+        .in("case_id", chunk),
+    ]);
+    if (entriesRes.error) throw entriesRes.error;
+    if (resultsRes.error) throw resultsRes.error;
+
+    for (const row of entriesRes.data ?? []) {
+      const caseId = String((row as { case_id: string }).case_id);
+      const existing = out.get(caseId) ?? {
+        caseStage: null,
+        disbursedStatus: null,
+        checkDisbursedAt: null,
+      };
+      existing.caseStage = ((row as { case_stage: string | null }).case_stage ?? null) as string | null;
+      out.set(caseId, existing);
+    }
+    for (const row of resultsRes.data ?? []) {
+      const caseId = String((row as { case_id: string }).case_id);
+      const existing = out.get(caseId) ?? {
+        caseStage: null,
+        disbursedStatus: null,
+        checkDisbursedAt: null,
+      };
+      existing.disbursedStatus =
+        ((row as { disbursed_status: string | null }).disbursed_status ?? null) as string | null;
+      existing.checkDisbursedAt =
+        ((row as { check_disbursed_at: string | null }).check_disbursed_at ?? null) as string | null;
+      out.set(caseId, existing);
+    }
+  }
+
+  return out;
 }
 
 export async function fetchEventsForCase(
