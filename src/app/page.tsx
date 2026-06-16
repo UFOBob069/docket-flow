@@ -7,7 +7,9 @@ import { addDays, differenceInCalendarDays, parseISO, format, formatDistanceToNo
 import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
+import { isTrackerPipelineActive, type CaseTrackerPipeline } from "@/lib/case-tracker-pipeline";
 import {
+  fetchCaseTrackerPipelineByCaseIds,
   fetchCasesWithEvents,
   saveEvent,
   subscribeActivity,
@@ -245,13 +247,22 @@ export default function DashboardPage() {
     try {
       const supabase = getBrowserSupabase();
       const bundled = await fetchCasesWithEvents(supabase, user.id);
+      let pipelineByCaseId = new Map<string, CaseTrackerPipeline>();
+      try {
+        pipelineByCaseId = await fetchCaseTrackerPipelineByCaseIds(
+          supabase,
+          bundled.map((b) => b.case.id)
+        );
+      } catch (e) {
+        console.warn("[dashboard] fetchCaseTrackerPipeline", e);
+      }
       const flat: Row[] = [];
       const activeList: Case[] = [];
       const t = todayIso();
       let activeCases = 0;
       let totalDeadlines = 0;
       for (const { case: c, events } of bundled) {
-        if (c.status !== "active") continue;
+        if (!isTrackerPipelineActive(pipelineByCaseId.get(c.id))) continue;
         activeCases++;
         activeList.push(c);
         for (const e of events) {
