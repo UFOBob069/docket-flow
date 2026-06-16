@@ -20,6 +20,7 @@ import {
   logActivity,
   saveEvent,
   subscribeContacts,
+  upsertCaseTrackerEntryFields,
 } from "@/lib/supabase/repo";
 import { adjustSolWeekendToFriday, statuteLimitDateIsoForCalendar } from "@/lib/sol";
 import { DEFAULT_REMINDERS } from "@/lib/reminder-presets";
@@ -45,6 +46,8 @@ export default function NewCasePage() {
   const [extraAssigneeIds, setExtraAssigneeIds] = useState<string[]>([]);
   const [notes, setNotes] = useState("");
   const [caseType, setCaseType] = useState("");
+  const [injuries, setInjuries] = useState("");
+  const [caseDescription, setCaseDescription] = useState("");
   const [solDate, setSolDate] = useState("");
   const [solRemindersMinutes, setSolRemindersMinutes] = useState<number[]>(() => [
     ...DEFAULT_REMINDERS.other,
@@ -156,6 +159,12 @@ export default function NewCasePage() {
       setErr("Select a case type.");
       return;
     }
+    const injuriesText = injuries.trim();
+    const descriptionText = caseDescription.trim();
+    if (!injuriesText || !descriptionText) {
+      setErr("Injuries and description (how it happened) are required.");
+      return;
+    }
     const sol = adjustSolWeekendToFriday(
       (solDate || statuteLimitDateIsoForCalendar(doi, 2)).slice(0, 10)
     );
@@ -180,6 +189,13 @@ export default function NewCasePage() {
         caseType,
         assignedContactIds,
       });
+
+      await upsertCaseTrackerEntryFields(
+        supabase,
+        caseId,
+        { injuries: injuriesText, caseDescription: descriptionText },
+        user.id
+      );
 
       const solEvents = createSolMilestoneEvents(
         caseId,
@@ -474,6 +490,28 @@ export default function NewCasePage() {
                   </option>
                 ))}
               </Select>
+            </div>
+            <div>
+              <Label required>Injuries</Label>
+              <Textarea
+                className="mt-1.5"
+                rows={3}
+                value={injuries}
+                onChange={(e) => setInjuries(e.target.value)}
+                placeholder="Describe the client's injuries"
+                required
+              />
+            </div>
+            <div>
+              <Label required>Description (how it happened)</Label>
+              <Textarea
+                className="mt-1.5"
+                rows={3}
+                value={caseDescription}
+                onChange={(e) => setCaseDescription(e.target.value)}
+                placeholder="Brief summary of how the incident occurred"
+                required
+              />
             </div>
             <div>
               <Label>Notes</Label>

@@ -471,6 +471,50 @@ export async function fetchCaseTrackerPipelineByCaseIds(
   return out;
 }
 
+/** Create or update Case Tracker intake fields on `case_tracker_entries`. */
+export async function upsertCaseTrackerEntryFields(
+  supabase: SupabaseClient,
+  caseId: string,
+  fields: { injuries: string; caseDescription: string },
+  userId?: string
+): Promise<void> {
+  const injuries = fields.injuries.trim();
+  const caseDescription = fields.caseDescription.trim();
+  const { data: existing, error: lookupErr } = await supabase
+    .from("case_tracker_entries")
+    .select("id")
+    .eq("case_id", caseId)
+    .maybeSingle();
+  if (lookupErr) throw lookupErr;
+
+  if (existing) {
+    const { error } = await supabase
+      .from("case_tracker_entries")
+      .update(
+        clean({
+          injuries,
+          case_description: caseDescription,
+          updated_by: userId ?? null,
+        })
+      )
+      .eq("case_id", caseId);
+    if (error) throw error;
+    return;
+  }
+
+  const { error } = await supabase.from("case_tracker_entries").insert(
+    clean({
+      case_id: caseId,
+      injuries,
+      case_description: caseDescription,
+      case_stage: "Intake",
+      created_by: userId ?? null,
+      updated_by: userId ?? null,
+    })
+  );
+  if (error) throw error;
+}
+
 export async function fetchEventsForCase(
   supabase: SupabaseClient,
   caseId: string
