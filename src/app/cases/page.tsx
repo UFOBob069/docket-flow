@@ -675,7 +675,6 @@ export default function CasesListPage() {
                   const isArchived = c.status === "archived";
                   const pipeline = pipelineByCaseId.get(c.id);
                   const stageLabel = caseStageFilterLabel(pipeline);
-                  const pipelineClosed = isTrackerPipelineClosed(pipeline);
                   return (
                     <Link
                       key={c.id}
@@ -721,9 +720,11 @@ export default function CasesListPage() {
                         {stageLabel && (
                           <Badge variant="default">{stageLabel}</Badge>
                         )}
-                        {pipelineClosed && (
+                        {c.status === "active" ? (
+                          <Badge variant="success">active</Badge>
+                        ) : (
                           <Badge variant="warning" className="text-[11px] font-bold uppercase tracking-wide">
-                            closed
+                            archived
                           </Badge>
                         )}
                         <svg
