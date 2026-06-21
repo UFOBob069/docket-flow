@@ -129,6 +129,10 @@ export interface Case {
   documentUrl?: string;
   documentFileName?: string;
   assignedContactIds: string[];
+  /** Primary case attorney (Case Tracker owner); only attorney in assigned_contact_ids. */
+  responsibleAttorneyContactId?: string | null;
+  /** Optional DocketFlow calendar attorney — not in assigned_contact_ids. */
+  eventAttorneyContactId?: string | null;
   createdAt: number;
   updatedAt: number;
 }

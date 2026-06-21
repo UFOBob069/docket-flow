@@ -12,6 +12,8 @@ import {
   digitsOnlyCaseNumberInput,
   isValidNumericCaseNumber,
 } from "@/lib/case-display";
+import { buildCaseAssignedContactIds } from "@/lib/case-attorneys";
+import { parseDisplayDate } from "@/lib/date-input-format";
 import { createSolMilestoneEvents } from "@/lib/event-factory";
 import { buildSolMilestoneSpecs } from "@/lib/sol-milestones";
 import {
@@ -26,6 +28,7 @@ import { adjustSolWeekendToFriday, statuteLimitDateIsoForCalendar } from "@/lib/
 import { DEFAULT_REMINDERS } from "@/lib/reminder-presets";
 import type { Case, Contact } from "@/lib/types";
 import { PageSkeleton } from "@/components/PageSkeleton";
+import { DateInput } from "@/components/DateInput";
 import { ReminderMinutesEditor } from "@/components/ReminderMinutesEditor";
 import { useHydrated } from "@/hooks/useHydrated";
 import { Button, Card, CardBody, Input, Label, PageWrapper, Select, Textarea } from "@/components/ui";
@@ -41,6 +44,7 @@ export default function NewCasePage() {
   const [dateOfBirth, setDateOfBirth] = useState("");
   const [dateOfIncident, setDateOfIncident] = useState("");
   const [attorneyId, setAttorneyId] = useState("");
+  const [eventAttorneyId, setEventAttorneyId] = useState("");
   const [paralegalId, setParalegalId] = useState("");
   /** Extra people on the case (beyond required attorney + paralegal) */
   const [extraAssigneeIds, setExtraAssigneeIds] = useState<string[]>([]);
@@ -135,6 +139,10 @@ export default function NewCasePage() {
       setErr("Case number, client name, date of birth, and date of incident are required.");
       return;
     }
+    if (!parseDisplayDate(dob) || !parseDisplayDate(doi)) {
+      setErr("Enter valid dates of birth and incident (mm/dd/yyyy).");
+      return;
+    }
     if (!isValidNumericCaseNumber(cn)) {
       setErr("Case number must contain digits only.");
       return;
@@ -146,7 +154,11 @@ export default function NewCasePage() {
       return;
     }
     if (!attorneyId || !paralegalId) {
-      setErr("Attorney and paralegal are required.");
+      setErr("Main attorney and paralegal are required.");
+      return;
+    }
+    if (eventAttorneyId && eventAttorneyId === attorneyId) {
+      setErr("Event attorney must be different from the main attorney.");
       return;
     }
     const attorney = contacts.find((c) => c.id === attorneyId);
@@ -174,10 +186,16 @@ export default function NewCasePage() {
     try {
       const supabase = getBrowserSupabase();
       const displayName = `${cl} (${cn})`;
+      const contactById = new Map(contacts.map((ct) => [ct.id, ct]));
       const extraIds = extraAssigneeIds.filter(
-        (id) => id && id !== attorneyId && id !== paralegalId
+        (id) => id && id !== attorneyId && id !== eventAttorneyId && id !== paralegalId
       );
-      const assignedContactIds = [...new Set([attorneyId, paralegalId, ...extraIds])];
+      const assignedContactIds = buildCaseAssignedContactIds({
+        responsibleAttorneyId: attorneyId,
+        paralegalId,
+        extraIds,
+        contactById,
+      });
       const caseId = await createCase(supabase, user.id, {
         name: displayName,
         clientName: cl,
@@ -187,6 +205,8 @@ export default function NewCasePage() {
         dateOfIncident: doi,
         notes: notes.trim() || null,
         caseType,
+        responsibleAttorneyContactId: attorneyId,
+        eventAttorneyContactId: eventAttorneyId || null,
         assignedContactIds,
       });
 
@@ -329,32 +349,25 @@ export default function NewCasePage() {
             </div>
             <div>
               <Label required>Date of birth</Label>
-              <Input
-                type="date"
+              <DateInput
                 className="mt-1.5"
                 value={dateOfBirth}
-                onChange={(e) => setDateOfBirth(e.target.value)}
+                onChange={setDateOfBirth}
                 required
               />
             </div>
             <div>
               <Label required>Date of incident</Label>
-              <Input
-                type="date"
+              <DateInput
                 className="mt-1.5"
                 value={dateOfIncident}
-                onChange={(e) => setDateOfIncident(e.target.value)}
+                onChange={setDateOfIncident}
                 required
               />
             </div>
             <div>
               <Label>Statute of limitations (2 years)</Label>
-              <Input
-                type="date"
-                className="mt-1.5"
-                value={solDate}
-                onChange={(e) => setSolDate(e.target.value)}
-              />
+              <DateInput className="mt-1.5" value={solDate} onChange={setSolDate} />
               <p className="mt-1 text-xs text-text-dim">
                 Defaults to incident + 2 years (weekend SOL dates move to the Friday before). Edit if needed.
               </p>
@@ -401,13 +414,31 @@ export default function NewCasePage() {
               </div>
             </div>
             <div>
-              <Label required>Attorney</Label>
+              <Label required>Main attorney</Label>
               <Select className="mt-1.5" value={attorneyId} onChange={(e) => setAttorneyId(e.target.value)} required>
                 <option value="">Select…</option>
                 {attorneys.map((c) => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </Select>
+            </div>
+            <div>
+              <Label>Event attorney</Label>
+              <Select
+                className="mt-1.5"
+                value={eventAttorneyId}
+                onChange={(e) => setEventAttorneyId(e.target.value)}
+              >
+                <option value="">None</option>
+                {attorneys
+                  .filter((c) => c.id !== attorneyId)
+                  .map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+              </Select>
+              <p className="mt-1 text-xs text-text-muted">
+                Optional — calendar invites only; not the Case Tracker case owner.
+              </p>
             </div>
             <div>
               <Label required>Paralegal</Label>
@@ -452,7 +483,12 @@ export default function NewCasePage() {
                     >
                       <option value="">Select contact…</option>
                       {contacts
-                        .filter((ct) => ct.id !== attorneyId && ct.id !== paralegalId)
+                        .filter(
+                          (ct) =>
+                            ct.id !== attorneyId &&
+                            ct.id !== eventAttorneyId &&
+                            ct.id !== paralegalId
+                        )
                         .map((ct) => (
                           <option key={ct.id} value={ct.id}>
                             {ct.name} ({ct.role.replace("_", " ")})

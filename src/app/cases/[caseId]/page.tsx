@@ -8,6 +8,13 @@ import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
 import { caseDisplayName } from "@/lib/case-display";
+import {
+  buildCaseAssignedContactIds,
+  caseCalendarInviteContactIds,
+  caseContactDisplayLabel,
+  caseContactSlotsFromCase,
+  contactByIdMap,
+} from "@/lib/case-attorneys";
 import { slackChannelLabel, slackChannelUrl } from "@/lib/slack-channel";
 import { buildCalendarBatches, googleCalendarDescription, hasGoogleCalendarSync } from "@/lib/calendar-payload";
 import { isBackfillNonSyncEvent } from "@/lib/calendar-gap-sync";
@@ -239,7 +246,10 @@ export default function CaseDetailPage() {
 
   // Reassign
   const [showReassign, setShowReassign] = useState(false);
-  const [reassignIds, setReassignIds] = useState<string[]>([]);
+  const [reassignMainAttorneyId, setReassignMainAttorneyId] = useState("");
+  const [reassignEventAttorneyId, setReassignEventAttorneyId] = useState("");
+  const [reassignParalegalId, setReassignParalegalId] = useState("");
+  const [reassignExtraIds, setReassignExtraIds] = useState<string[]>([]);
 
   const [verifyBusy, setVerifyBusy] = useState(false);
   const [verifyResult, setVerifyResult] = useState<VerifyResponse | null>(null);
@@ -260,6 +270,16 @@ export default function CaseDetailPage() {
   );
   const allInMonthSelected =
     eventIdsInMonth.length > 0 && eventIdsInMonth.every((id) => selected.has(id));
+
+  const contactById = useMemo(() => contactByIdMap(contacts), [contacts]);
+  const attorneys = useMemo(
+    () => contacts.filter((ct) => ct.role === "attorney").sort((a, b) => a.name.localeCompare(b.name)),
+    [contacts]
+  );
+  const paralegals = useMemo(
+    () => contacts.filter((ct) => ct.role === "paralegal").sort((a, b) => a.name.localeCompare(b.name)),
+    [contacts]
+  );
 
   const eventKindSelectGroups = useMemo(
     () => augmentKindGroupsForEdit(ALL_EVENT_KIND_SELECT_GROUPS, editing?.eventKind),
@@ -954,14 +974,41 @@ export default function CaseDetailPage() {
 
   async function saveReassign() {
     if (!caseId || !c || !user) return;
+    if (!reassignMainAttorneyId || !reassignParalegalId) {
+      setMsg("Main attorney and paralegal are required.");
+      return;
+    }
+    if (reassignEventAttorneyId && reassignEventAttorneyId === reassignMainAttorneyId) {
+      setMsg("Event attorney must be different from the main attorney.");
+      return;
+    }
     setBusy(true); setMsg(null);
     try {
       const supabase = getBrowserSupabase();
-      const newContactIds = reassignIds.filter(Boolean);
-      await updateCase(supabase, caseId, { assignedContactIds: newContactIds });
+      const extraIds = reassignExtraIds.filter(
+        (id) =>
+          id &&
+          id !== reassignMainAttorneyId &&
+          id !== reassignParalegalId
+      );
+      const newContactIds = buildCaseAssignedContactIds({
+        responsibleAttorneyId: reassignMainAttorneyId,
+        paralegalId: reassignParalegalId,
+        extraIds,
+        contactById,
+      });
+      await updateCase(supabase, caseId, {
+        assignedContactIds: newContactIds,
+        responsibleAttorneyContactId: reassignMainAttorneyId,
+        eventAttorneyContactId: reassignEventAttorneyId || null,
+      });
+      const attendeeContactIds = caseCalendarInviteContactIds({
+        assignedContactIds: newContactIds,
+        eventAttorneyContactId: reassignEventAttorneyId || null,
+      });
       const attendeeEmails = Array.from(
         new Set(
-          newContactIds
+          attendeeContactIds
             .map((id) => contacts.find((ct) => ct.id === id)?.email)
             .filter((e): e is string => Boolean(e))
         )
@@ -1027,6 +1074,7 @@ export default function CaseDetailPage() {
           ? "Contacts reassigned and Google Calendar updated for synced deadlines"
           : "Contacts reassigned"
       );
+      setShowReassign(false);
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "Reassign failed");
     } finally { setBusy(false); }
@@ -1196,7 +1244,22 @@ export default function CaseDetailPage() {
         <CardBody>
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-text">Assigned Contacts</h3>
-            <Button variant="ghost" size="sm" onClick={() => { setShowReassign(!showReassign); setReassignIds([...c.assignedContactIds]); }}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                if (showReassign) {
+                  setShowReassign(false);
+                  return;
+                }
+                const slots = caseContactSlotsFromCase(c, contactById);
+                setReassignMainAttorneyId(slots.responsibleAttorneyId);
+                setReassignEventAttorneyId(slots.eventAttorneyId);
+                setReassignParalegalId(slots.paralegalId);
+                setReassignExtraIds(slots.extraIds);
+                setShowReassign(true);
+              }}
+            >
               {showReassign ? "Cancel" : "Reassign"}
             </Button>
           </div>
@@ -1207,40 +1270,126 @@ export default function CaseDetailPage() {
               )}
               {c.assignedContactIds.map((id, idx) => {
                 const ct = contacts.find((x) => x.id === id);
+                const caseRole = caseContactDisplayLabel(id, c, contactById);
                 return (
                   <span
                     key={`${id}-${idx}`}
                     className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface-alt px-3 py-1 text-xs font-medium text-text"
                   >
                     {ct ? ct.name : "Unknown contact"}
-                    {ct && <Badge variant="default">{ct.role.replace("_", " ")}</Badge>}
+                    {caseRole ? (
+                      <Badge variant="success">{caseRole}</Badge>
+                    ) : (
+                      ct && <Badge variant="default">{ct.role.replace("_", " ")}</Badge>
+                    )}
                   </span>
                 );
               })}
+              {c.eventAttorneyContactId?.trim() && (() => {
+                const id = c.eventAttorneyContactId!.trim();
+                const ct = contacts.find((x) => x.id === id);
+                return (
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface-alt px-3 py-1 text-xs font-medium text-text">
+                    {ct ? ct.name : "Unknown contact"}
+                    <Badge variant="default">Event attorney</Badge>
+                  </span>
+                );
+              })()}
             </div>
           ) : (
-            <div className="mt-3 space-y-3">
-              {reassignIds.map((rid, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <Select value={rid} onChange={(e) => {
-                    const next = [...reassignIds];
-                    next[i] = e.target.value;
-                    setReassignIds(next);
-                  }}>
-                    <option value="">Select contact…</option>
-                    {contacts.map((ct) => (
-                      <option key={ct.id} value={ct.id}>{ct.name} ({ct.role.replace("_", " ")})</option>
-                    ))}
-                  </Select>
-                  <button type="button" className="text-danger hover:text-danger/80" onClick={() => setReassignIds(reassignIds.filter((_, j) => j !== i))}>
-                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-                  </button>
-                </div>
-              ))}
-              <div className="flex gap-2">
-                <Button variant="ghost" size="sm" onClick={() => setReassignIds([...reassignIds, ""])}>+ Add contact</Button>
-                <Button size="sm" disabled={busy} onClick={() => void saveReassign()}>Save</Button>
+            <div className="mt-3 space-y-4">
+              <div>
+                <Label required>Main attorney</Label>
+                <Select
+                  className="mt-1.5"
+                  value={reassignMainAttorneyId}
+                  onChange={(e) => setReassignMainAttorneyId(e.target.value)}
+                >
+                  <option value="">Select…</option>
+                  {attorneys.map((ct) => (
+                    <option key={ct.id} value={ct.id}>{ct.name}</option>
+                  ))}
+                </Select>
               </div>
+              <div>
+                <Label>Event attorney</Label>
+                <Select
+                  className="mt-1.5"
+                  value={reassignEventAttorneyId}
+                  onChange={(e) => setReassignEventAttorneyId(e.target.value)}
+                >
+                  <option value="">None</option>
+                  {attorneys
+                    .filter((ct) => ct.id !== reassignMainAttorneyId)
+                    .map((ct) => (
+                      <option key={ct.id} value={ct.id}>{ct.name}</option>
+                    ))}
+                </Select>
+                <p className="mt-1 text-xs text-text-muted">
+                  Calendar invites only — not stored in assigned contacts (Case Tracker safe).
+                </p>
+              </div>
+              <div>
+                <Label required>Paralegal</Label>
+                <Select
+                  className="mt-1.5"
+                  value={reassignParalegalId}
+                  onChange={(e) => setReassignParalegalId(e.target.value)}
+                >
+                  <option value="">Select…</option>
+                  {paralegals.map((ct) => (
+                    <option key={ct.id} value={ct.id}>{ct.name}</option>
+                  ))}
+                </Select>
+              </div>
+              <div>
+                <Label>Additional people</Label>
+                <div className="mt-2 space-y-2">
+                  {reassignExtraIds.map((rid, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <Select
+                        className="min-w-0 flex-1"
+                        value={rid}
+                        onChange={(e) => {
+                          const next = [...reassignExtraIds];
+                          next[i] = e.target.value;
+                          setReassignExtraIds(next);
+                        }}
+                      >
+                        <option value="">Select contact…</option>
+                        {contacts
+                          .filter(
+                            (ct) =>
+                              ct.id !== reassignMainAttorneyId &&
+                              ct.id !== reassignParalegalId &&
+                              ct.role !== "attorney"
+                          )
+                          .map((ct) => (
+                            <option key={ct.id} value={ct.id}>
+                              {ct.name} ({ct.role.replace("_", " ")})
+                            </option>
+                          ))}
+                      </Select>
+                      <button
+                        type="button"
+                        className="text-danger hover:text-danger/80"
+                        onClick={() => setReassignExtraIds(reassignExtraIds.filter((_, j) => j !== i))}
+                      >
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="mt-2"
+                  onClick={() => setReassignExtraIds([...reassignExtraIds, ""])}
+                >
+                  + Add person
+                </Button>
+              </div>
+              <Button size="sm" disabled={busy} onClick={() => void saveReassign()}>Save</Button>
             </div>
           )}
         </CardBody>

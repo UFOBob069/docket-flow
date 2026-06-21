@@ -111,6 +111,8 @@ function caseFromRow(r: Record<string, unknown>): Case {
     documentUrl: (r.document_url as string) ?? undefined,
     documentFileName: (r.document_file_name as string) ?? undefined,
     assignedContactIds: ((r.assigned_contact_ids as string[]) ?? []).map(String),
+    responsibleAttorneyContactId: (r.responsible_attorney_contact_id as string) ?? null,
+    eventAttorneyContactId: (r.event_attorney_contact_id as string) ?? null,
     createdAt: Number(r.created_at),
     updatedAt: Number(r.updated_at),
   };
@@ -650,7 +652,11 @@ export async function createCase(
   input: Omit<
     Case,
     "id" | "ownerId" | "createdAt" | "updatedAt" | "assignedContactIds" | "status"
-  > & { assignedContactIds?: string[] }
+  > & {
+    assignedContactIds?: string[];
+    responsibleAttorneyContactId?: string | null;
+    eventAttorneyContactId?: string | null;
+  }
 ): Promise<string> {
   const cn = input.caseNumber?.trim();
   if (cn) {
@@ -677,6 +683,8 @@ export async function createCase(
     document_url: input.documentUrl ?? null,
     document_file_name: input.documentFileName ?? null,
     assigned_contact_ids: (input.assignedContactIds ?? []).filter(Boolean),
+    responsible_attorney_contact_id: input.responsibleAttorneyContactId?.trim() || null,
+    event_attorney_contact_id: input.eventAttorneyContactId?.trim() || null,
     created_at: now,
     updated_at: now,
   });
@@ -705,6 +713,10 @@ export async function updateCase(
   if (patch.documentFileName !== undefined) row.document_file_name = patch.documentFileName;
   if (patch.assignedContactIds !== undefined)
     row.assigned_contact_ids = patch.assignedContactIds.filter(Boolean);
+  if (patch.responsibleAttorneyContactId !== undefined)
+    row.responsible_attorney_contact_id = patch.responsibleAttorneyContactId?.trim() || null;
+  if (patch.eventAttorneyContactId !== undefined)
+    row.event_attorney_contact_id = patch.eventAttorneyContactId?.trim() || null;
   const { error } = await supabase.from("cases").update(row).eq("id", caseId);
   if (error) throw error;
 }

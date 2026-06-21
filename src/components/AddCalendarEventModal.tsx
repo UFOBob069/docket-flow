@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { caseDisplayName } from "@/lib/case-display";
+import { caseCalendarInviteContactIds } from "@/lib/case-attorneys";
 import { googleCalendarDescription } from "@/lib/calendar-payload";
 import { postCalendarSync } from "@/lib/calendar-client";
 import { createAdHocCalendarEvent } from "@/lib/event-factory";
@@ -263,9 +264,10 @@ export function AddCalendarEventModal({
     try {
       const supabase = getBrowserSupabase();
       const displayName = caseDisplayName(caseRecord);
-      const inviteContactIds = [
-        ...new Set([...caseRecord.assignedContactIds, ...addExtraInviteeRowIds.filter(Boolean)]),
-      ];
+      const inviteContactIds = caseCalendarInviteContactIds(
+        caseRecord,
+        addExtraInviteeRowIds.filter(Boolean)
+      );
       const assigneeEmails = Array.from(
         new Set(
           inviteContactIds
@@ -416,9 +418,10 @@ export function AddCalendarEventModal({
       setMsg(oneOffParsed.error);
       return;
     }
-    const inviteContactIds = [
-      ...new Set([...caseRecord.assignedContactIds, ...addExtraInviteeRowIds.filter(Boolean)]),
-    ];
+    const inviteContactIds = caseCalendarInviteContactIds(
+      caseRecord,
+      addExtraInviteeRowIds.filter(Boolean)
+    );
     const assigneeEmails = Array.from(
       new Set(
         inviteContactIds

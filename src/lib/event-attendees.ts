@@ -1,13 +1,12 @@
+import { caseCalendarInviteContactIdsForEvent } from "@/lib/case-attorneys";
 import { mergeAttendeeEmailLists, parseOneOffInviteEmails } from "@/lib/calendar-global-recipients";
 import type { CalendarEvent, Case, Contact } from "@/lib/types";
 
 const ONE_TIME_PREFIX = "One-time calendar invitees:";
 
-/** Case assignees plus event-specific extra contacts (deduped). */
+/** Case assignees plus event attorney and event-specific extras (deduped). */
 export function eventInviteContactIds(caseRecord: Case, event: CalendarEvent): string[] {
-  const assigned = caseRecord.assignedContactIds ?? [];
-  const extra = event.extraInternalContactIds ?? [];
-  return [...new Set([...assigned, ...extra].filter(Boolean))];
+  return caseCalendarInviteContactIdsForEvent(caseRecord, event);
 }
 
 export function attendeeEmailsForEvent(
