@@ -10,8 +10,10 @@ import { getRemindersForEventKind } from "@/lib/case-event-kinds";
 import { parseCasesImportCsv, CASE_IMPORT_CSV_TEMPLATE } from "@/lib/import-cases-csv";
 import {
   parseOtherEventsBackfillCsv,
+  parsePreferredLanguageBackfillCsv,
   parseSolBackfillCsv,
   OTHER_EVENTS_BACKFILL_CSV_TEMPLATE,
+  PREFERRED_LANGUAGE_BACKFILL_CSV_TEMPLATE,
   SOL_BACKFILL_CSV_TEMPLATE,
 } from "@/lib/backfill-csv";
 import {
@@ -27,7 +29,7 @@ import { PageSkeleton } from "@/components/PageSkeleton";
 import { useHydrated } from "@/hooks/useHydrated";
 import { Button, Card, CardBody, CardHeader, Label, PageWrapper } from "@/components/ui";
 
-type BackfillMode = "cases" | "sol" | "other";
+type BackfillMode = "cases" | "language" | "sol" | "other";
 type ImportSummary = {
   mode: BackfillMode;
   processed: number;
@@ -130,6 +132,7 @@ export default function BackfillPage() {
             caseNumber: row.caseNumber.trim(),
             causeNumber: row.caseNumber.trim(),
             dateOfIncident: row.dateOfIncident || null,
+            ...(row.preferredLanguage ? { preferredLanguage: row.preferredLanguage } : {}),
             assignedContactIds: [row.attorneyId, row.paralegalId],
           });
           updated++;
@@ -140,6 +143,7 @@ export default function BackfillPage() {
             caseNumber: row.caseNumber.trim(),
             causeNumber: row.caseNumber.trim(),
             dateOfIncident: row.dateOfIncident || null,
+            ...(row.preferredLanguage ? { preferredLanguage: row.preferredLanguage } : {}),
             assignedContactIds: [row.attorneyId, row.paralegalId],
           });
           existingMap.set(key, {
@@ -174,6 +178,57 @@ export default function BackfillPage() {
       });
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Case backfill failed.");
+    } finally {
+      setBusyMode(null);
+    }
+  }
+
+  async function runPreferredLanguageBackfill(file: File | null) {
+    if (!user || !file) return;
+    setBusyMode("language");
+    setSummary(null);
+    setErr(null);
+    try {
+      const text = await file.text();
+      const parsed = parsePreferredLanguageBackfillCsv(text);
+      if (!parsed.rows.length) {
+        setSummary({
+          mode: "language",
+          processed: 0,
+          imported: 0,
+          unmatched: [],
+          errors: parsed.errors.length ? parsed.errors : ["No valid preferred-language rows found."],
+        });
+        return;
+      }
+      const supabase = getBrowserSupabase();
+      const unmatched: string[] = [];
+      let updated = 0;
+      let skipped = 0;
+      for (const row of parsed.rows) {
+        const c = caseByNumber.get(compactCaseNumber(row.caseNumber));
+        if (!c) {
+          unmatched.push(`Case #${row.caseNumber} not found`);
+          continue;
+        }
+        if (c.preferredLanguage === row.preferredLanguage) {
+          skipped++;
+          continue;
+        }
+        await updateCase(supabase, c.id, { preferredLanguage: row.preferredLanguage });
+        updated++;
+      }
+      await refreshCases();
+      setSummary({
+        mode: "language",
+        processed: parsed.rows.length,
+        imported: updated,
+        unmatched,
+        errors: parsed.errors,
+        note: `${updated} updated${skipped ? `, ${skipped} already matched` : ""}.`,
+      });
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Preferred language backfill failed.");
     } finally {
       setBusyMode(null);
     }
@@ -312,7 +367,7 @@ export default function BackfillPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight text-text">Backfill Imports</h1>
         <p className="mt-2 max-w-3xl text-sm text-text-muted">
-          Use three separate uploads: first Cases, then Statute of Limitations, then Other Events. SOL and Other
+          Use separate uploads for cases, preferred language, statute of limitations, and other events. SOL and Other
           imports are UI-only and do not create or update Google Calendar entries.
         </p>
       </div>
@@ -321,11 +376,14 @@ export default function BackfillPage() {
         <Button type="button" variant={mode === "cases" ? "pink" : "secondary"} onClick={() => setMode("cases")}>
           1) Cases
         </Button>
+        <Button type="button" variant={mode === "language" ? "pink" : "secondary"} onClick={() => setMode("language")}>
+          2) Preferred language
+        </Button>
         <Button type="button" variant={mode === "sol" ? "pink" : "secondary"} onClick={() => setMode("sol")}>
-          2) Statute of Limitations
+          3) Statute of Limitations
         </Button>
         <Button type="button" variant={mode === "other" ? "pink" : "secondary"} onClick={() => setMode("other")}>
-          3) Other Events
+          4) Other Events
         </Button>
       </div>
 
@@ -362,7 +420,7 @@ export default function BackfillPage() {
             <h2 className="text-base font-semibold text-text">Case Upload</h2>
             <p className="mt-1 text-sm text-text-muted">
               Required columns: case number, client name, attorney, paralegal. This creates or updates cases by case
-              number.
+              number. Optional: date_of_incident, preferred_language.
             </p>
           </CardHeader>
           <CardBody className="space-y-3">
@@ -380,6 +438,34 @@ export default function BackfillPage() {
               className="text-xs font-medium text-primary hover:underline"
             >
               Download case template
+            </a>
+          </CardBody>
+        </Card>
+      )}
+
+      {mode === "language" && (
+        <Card>
+          <CardHeader>
+            <h2 className="text-base font-semibold text-text">Preferred Language Backfill</h2>
+            <p className="mt-1 text-sm text-text-muted">
+              Matches existing cases by case number and sets preferred language to English or Spanish.
+            </p>
+          </CardHeader>
+          <CardBody className="space-y-3">
+            <Label>CSV file</Label>
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              className="block max-w-full cursor-pointer text-sm file:mr-3 file:rounded-md file:border-0 file:bg-primary-light file:px-3 file:py-1 file:text-xs file:font-semibold file:text-primary"
+              disabled={busyMode !== null}
+              onChange={(e) => void runPreferredLanguageBackfill(e.target.files?.[0] ?? null)}
+            />
+            <a
+              href={`data:text/csv;charset=utf-8,${encodeURIComponent(PREFERRED_LANGUAGE_BACKFILL_CSV_TEMPLATE)}`}
+              download="backfill-preferred-language-template.csv"
+              className="text-xs font-medium text-primary hover:underline"
+            >
+              Download preferred-language template
             </a>
           </CardBody>
         </Card>

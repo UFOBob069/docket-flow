@@ -7,6 +7,7 @@ import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
 import { CASE_TYPE_OPTIONS, isCaseType } from "@/lib/case-types";
+import { isPreferredLanguage, PREFERRED_LANGUAGE_OPTIONS } from "@/lib/preferred-languages";
 import {
   caseDisplayName,
   digitsOnlyCaseNumberInput,
@@ -50,6 +51,7 @@ export default function NewCasePage() {
   const [extraAssigneeIds, setExtraAssigneeIds] = useState<string[]>([]);
   const [notes, setNotes] = useState("");
   const [caseType, setCaseType] = useState("");
+  const [preferredLanguage, setPreferredLanguage] = useState("");
   const [injuries, setInjuries] = useState("");
   const [caseDescription, setCaseDescription] = useState("");
   const [solDate, setSolDate] = useState("");
@@ -171,6 +173,10 @@ export default function NewCasePage() {
       setErr("Select a case type.");
       return;
     }
+    if (!isPreferredLanguage(preferredLanguage)) {
+      setErr("Select a preferred language.");
+      return;
+    }
     const injuriesText = injuries.trim();
     const descriptionText = caseDescription.trim();
     if (!injuriesText || !descriptionText) {
@@ -205,6 +211,7 @@ export default function NewCasePage() {
         dateOfIncident: doi,
         notes: notes.trim() || null,
         caseType,
+        preferredLanguage,
         responsibleAttorneyContactId: attorneyId,
         eventAttorneyContactId: eventAttorneyId || null,
         assignedContactIds,
@@ -346,6 +353,22 @@ export default function NewCasePage() {
             <div>
               <Label required>Client name</Label>
               <Input className="mt-1.5" value={clientName} onChange={(e) => setClientName(e.target.value)} required />
+            </div>
+            <div>
+              <Label required>Preferred language</Label>
+              <Select
+                className="mt-1.5"
+                value={preferredLanguage}
+                onChange={(e) => setPreferredLanguage(e.target.value)}
+                required
+              >
+                <option value="">Select language…</option>
+                {PREFERRED_LANGUAGE_OPTIONS.map((lang) => (
+                  <option key={lang} value={lang}>
+                    {lang}
+                  </option>
+                ))}
+              </Select>
             </div>
             <div>
               <Label required>Date of birth</Label>

@@ -1,5 +1,7 @@
-import type { EventKind } from "./types";
+import type { PreferredLanguage } from "./preferred-languages";
+import { normalizePreferredLanguageInput } from "./preferred-languages";
 import { EVENT_KIND_LABELS } from "./one-off-events";
+import type { EventKind } from "./types";
 
 export type ParsedSolBackfillRow = {
   caseNumber: string;
@@ -17,6 +19,11 @@ export type ParsedOtherBackfillRow = {
   eventKind: EventKind;
   startTime: string;
   endTime: string;
+};
+
+export type ParsedPreferredLanguageBackfillRow = {
+  caseNumber: string;
+  preferredLanguage: PreferredLanguage;
 };
 
 function headerKey(raw: string): string {
@@ -205,9 +212,53 @@ export function parseOtherEventsBackfillCsv(text: string): {
   return { rows, errors };
 }
 
+export function parsePreferredLanguageBackfillCsv(text: string): {
+  rows: ParsedPreferredLanguageBackfillRow[];
+  errors: string[];
+} {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length < 2) return { rows: [], errors: ["CSV needs a header row and at least one data row."] };
+  const header = parseCsvLine(lines[0]!).map(headerKey);
+  const idxCase = header.findIndex((h) => ["case_number", "casenumber", "case_no", "case"].includes(h));
+  const idxLang = header.findIndex((h) =>
+    ["preferred_language", "preferredlanguage", "language", "client_language", "clientlanguage"].includes(h)
+  );
+  if (idxCase < 0 || idxLang < 0) {
+    return {
+      rows: [],
+      errors: ["Missing column(s). Required: case_number and preferred_language (or language)."],
+    };
+  }
+  const rows: ParsedPreferredLanguageBackfillRow[] = [];
+  const errors: string[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const lineNo = i + 1;
+    const cells = parseCsvLine(lines[i]!);
+    const caseNumber = (cells[idxCase] ?? "").trim();
+    const langRaw = (cells[idxLang] ?? "").trim();
+    if (!caseNumber && !langRaw) continue;
+    const rowErr: string[] = [];
+    if (!caseNumber) rowErr.push(`Row ${lineNo}: case number is required.`);
+    const preferredLanguage = normalizePreferredLanguageInput(langRaw);
+    if (!preferredLanguage) {
+      rowErr.push(`Row ${lineNo}: preferred_language must be English or Spanish.`);
+    }
+    if (rowErr.length) {
+      errors.push(...rowErr);
+      continue;
+    }
+    rows.push({ caseNumber, preferredLanguage: preferredLanguage! });
+  }
+  return { rows, errors };
+}
+
 export const SOL_BACKFILL_CSV_TEMPLATE = `case_number,sol_date,title,description,event_kind
 1025,2027-05-01,Statute of Limitations,Backfilled SOL,milestone_statute_of_limitations`;
 
 export const OTHER_EVENTS_BACKFILL_CSV_TEMPLATE = `case_number,event_date,title,event_kind,description,start_time,end_time
 1025,2026-09-15,Discovery completion,discovery_completion_deadline,Backfilled from legacy sheet,,
 1025,2026-10-03,Client call,client_call,Backfilled legacy appointment,14:00,15:00`;
+
+export const PREFERRED_LANGUAGE_BACKFILL_CSV_TEMPLATE = `case_number,preferred_language
+1025,English
+2040,Spanish`;

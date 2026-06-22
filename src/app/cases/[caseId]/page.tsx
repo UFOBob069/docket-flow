@@ -8,6 +8,7 @@ import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
 import { caseDisplayName } from "@/lib/case-display";
+import { isPreferredLanguage, PREFERRED_LANGUAGE_OPTIONS } from "@/lib/preferred-languages";
 import {
   buildCaseAssignedContactIds,
   caseCalendarInviteContactIds,
@@ -250,6 +251,7 @@ export default function CaseDetailPage() {
   const [reassignEventAttorneyId, setReassignEventAttorneyId] = useState("");
   const [reassignParalegalId, setReassignParalegalId] = useState("");
   const [reassignExtraIds, setReassignExtraIds] = useState<string[]>([]);
+  const [editPreferredLanguage, setEditPreferredLanguage] = useState("");
 
   const [verifyBusy, setVerifyBusy] = useState(false);
   const [verifyResult, setVerifyResult] = useState<VerifyResponse | null>(null);
@@ -303,6 +305,10 @@ export default function CaseDetailPage() {
   useEffect(() => {
     if (!loading && supabaseReady && !user) router.replace("/login");
   }, [user, loading, supabaseReady, router]);
+
+  useEffect(() => {
+    if (c) setEditPreferredLanguage(c.preferredLanguage ?? "");
+  }, [c?.id, c?.preferredLanguage]);
 
   useEffect(() => {
     if (!supabaseReady || !user || !c) {
@@ -1080,6 +1086,26 @@ export default function CaseDetailPage() {
     } finally { setBusy(false); }
   }
 
+  async function savePreferredLanguage() {
+    if (!caseId || !c || !user) return;
+    if (!isPreferredLanguage(editPreferredLanguage)) {
+      setMsg("Select a preferred language.");
+      return;
+    }
+    if (editPreferredLanguage === (c.preferredLanguage ?? "")) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const supabase = getBrowserSupabase();
+      await updateCase(supabase, caseId, { preferredLanguage: editPreferredLanguage });
+      flash("Preferred language saved");
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!hydrated) return <PageSkeleton />;
   if (!isSupabaseConfigured()) return <PageWrapper><p className="text-text-muted">Configure Supabase.</p></PageWrapper>;
   if (!user) return null;
@@ -1138,6 +1164,12 @@ export default function CaseDetailPage() {
               <>
                 <span className="text-border-strong">·</span>
                 <span>DOB {c.dateOfBirth}</span>
+              </>
+            )}
+            {c.preferredLanguage && (
+              <>
+                <span className="text-border-strong">·</span>
+                <span>{c.preferredLanguage}</span>
               </>
             )}
             {c.dateOfIncident && (
@@ -1238,6 +1270,40 @@ export default function CaseDetailPage() {
           </Button>
         </div>
       </div>
+
+      {/* Case details */}
+      <Card className="mt-6">
+        <CardBody>
+          <h3 className="text-sm font-semibold text-text">Case details</h3>
+          <div className="mt-3 max-w-sm">
+            <Label required>Preferred language</Label>
+            <Select
+              className="mt-1.5"
+              value={editPreferredLanguage}
+              onChange={(e) => setEditPreferredLanguage(e.target.value)}
+            >
+              <option value="">Select language…</option>
+              {PREFERRED_LANGUAGE_OPTIONS.map((lang) => (
+                <option key={lang} value={lang}>
+                  {lang}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <Button
+            size="sm"
+            className="mt-3"
+            disabled={
+              busy ||
+              !isPreferredLanguage(editPreferredLanguage) ||
+              editPreferredLanguage === (c.preferredLanguage ?? "")
+            }
+            onClick={() => void savePreferredLanguage()}
+          >
+            Save
+          </Button>
+        </CardBody>
+      </Card>
 
       {/* Assigned contacts */}
       <Card className="mt-6">

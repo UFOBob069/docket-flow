@@ -1,10 +1,14 @@
 import type { Contact } from "./types";
+import { normalizePreferredLanguageInput } from "./preferred-languages";
+import type { PreferredLanguage } from "./preferred-languages";
 
 export type ParsedCaseCsvRow = {
   caseNumber: string;
   clientName: string;
   /** Empty unless an optional date_of_incident column was present and valid. */
   dateOfIncident: string;
+  /** Set when preferred_language column is present and valid. */
+  preferredLanguage?: PreferredLanguage;
   attorneyId: string;
   paralegalId: string;
 };
@@ -23,6 +27,7 @@ type HeaderTarget =
   | { kind: "caseNumber" }
   | { kind: "clientName" }
   | { kind: "dateOfIncident" }
+  | { kind: "preferredLanguage" }
   | { kind: "contact"; role: "attorney" | "paralegal"; nameOnly: boolean };
 
 /** `nameOnly`: column is explicitly a name — match Contacts `name` only, never treat `@` as email. */
@@ -38,6 +43,10 @@ const HEADER_TARGETS: Record<string, HeaderTarget> = {
   doi: { kind: "dateOfIncident" },
   dateofincident: { kind: "dateOfIncident" },
   incident_date: { kind: "dateOfIncident" },
+  preferred_language: { kind: "preferredLanguage" },
+  preferredlanguage: { kind: "preferredLanguage" },
+  language: { kind: "preferredLanguage" },
+  client_language: { kind: "preferredLanguage" },
   attorney_email: { kind: "contact", role: "attorney", nameOnly: false },
   attorney: { kind: "contact", role: "attorney", nameOnly: false },
   attorneyemail: { kind: "contact", role: "attorney", nameOnly: false },
@@ -54,6 +63,7 @@ type ParsedHeaderMap = {
   caseNumber: number;
   clientName: number;
   dateOfIncident?: number;
+  preferredLanguage?: number;
   attorney: { index: number; nameOnly: boolean };
   paralegal: { index: number; nameOnly: boolean };
 };
@@ -163,6 +173,7 @@ function parseHeaders(headerCells: string[]): ParsedHeaderMap | { error: string 
     caseNumber: number;
     clientName: number;
     dateOfIncident: number;
+    preferredLanguage: number;
     attorney: { index: number; nameOnly: boolean };
     paralegal: { index: number; nameOnly: boolean };
   }> = {};
@@ -179,6 +190,9 @@ function parseHeaders(headerCells: string[]): ParsedHeaderMap | { error: string 
         break;
       case "dateOfIncident":
         partial.dateOfIncident = idx;
+        break;
+      case "preferredLanguage":
+        partial.preferredLanguage = idx;
         break;
       case "contact":
         if (target.role === "attorney") {
@@ -202,7 +216,7 @@ function parseHeaders(headerCells: string[]): ParsedHeaderMap | { error: string 
       error:
         "Missing column(s). Required: case_number, client_name, plus attorney and paralegal columns " +
         "(e.g. attorney_name & paralegal_name, or attorney_email & paralegal_email, or attorney / paralegal). " +
-        "Optional: date_of_incident.",
+        "Optional: date_of_incident, preferred_language.",
     };
   }
 
@@ -240,10 +254,12 @@ export function parseCasesImportCsv(
     const clientName = (cells[map.clientName] ?? "").trim();
     const doiRaw =
       map.dateOfIncident !== undefined ? (cells[map.dateOfIncident] ?? "").trim() : "";
+    const langRaw =
+      map.preferredLanguage !== undefined ? (cells[map.preferredLanguage] ?? "").trim() : "";
     const attRaw = (cells[map.attorney.index] ?? "").trim();
     const parRaw = (cells[map.paralegal.index] ?? "").trim();
 
-    if (!caseNumber && !clientName && !doiRaw && !attRaw && !parRaw) continue;
+    if (!caseNumber && !clientName && !doiRaw && !langRaw && !attRaw && !parRaw) continue;
 
     const rowErr: string[] = [];
     if (!caseNumber) rowErr.push(`Row ${lineNo}: case number is required.`);
@@ -253,6 +269,15 @@ export function parseCasesImportCsv(
       const parsed = normalizeIncidentDate(doiRaw);
       if (!parsed) rowErr.push(`Row ${lineNo}: date_of_incident must be YYYY-MM-DD or M/D/YYYY.`);
       else dateOfIncident = parsed;
+    }
+    let preferredLanguage: PreferredLanguage | undefined;
+    if (langRaw) {
+      const parsedLang = normalizePreferredLanguageInput(langRaw);
+      if (!parsedLang) {
+        rowErr.push(`Row ${lineNo}: preferred_language must be English or Spanish.`);
+      } else {
+        preferredLanguage = parsedLang;
+      }
     }
 
     const att = resolveContactId(attRaw, "attorney", contacts, {
@@ -277,6 +302,7 @@ export function parseCasesImportCsv(
       caseNumber,
       clientName,
       dateOfIncident,
+      ...(preferredLanguage ? { preferredLanguage } : {}),
       attorneyId: (att as { id: string }).id,
       paralegalId: (par as { id: string }).id,
     });
@@ -285,5 +311,5 @@ export function parseCasesImportCsv(
   return { rows, errors };
 }
 
-export const CASE_IMPORT_CSV_TEMPLATE = `case_number,client_name,attorney_name,paralegal_name
-12345-678,Jane Doe,Lead Attorney Name,Paralegal Name`;
+export const CASE_IMPORT_CSV_TEMPLATE = `case_number,client_name,attorney_name,paralegal_name,preferred_language
+12345-678,Jane Doe,Lead Attorney Name,Paralegal Name,English`;

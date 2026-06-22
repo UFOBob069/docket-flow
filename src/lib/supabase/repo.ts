@@ -107,6 +107,7 @@ function caseFromRow(r: Record<string, unknown>): Case {
     dateOfBirth: (r.date_of_birth as string) ?? null,
     notes: (r.notes as string) ?? null,
     caseType: (r.case_type as string) ?? null,
+    preferredLanguage: (r.preferred_language as string) ?? null,
     status: r.status as Case["status"],
     documentUrl: (r.document_url as string) ?? undefined,
     documentFileName: (r.document_file_name as string) ?? undefined,
@@ -679,6 +680,7 @@ export async function createCase(
     date_of_birth: input.dateOfBirth?.trim() || null,
     notes: input.notes?.trim() || null,
     case_type: input.caseType?.trim() || null,
+    preferred_language: input.preferredLanguage?.trim() || null,
     status: "active" as const,
     document_url: input.documentUrl ?? null,
     document_file_name: input.documentFileName ?? null,
@@ -708,6 +710,7 @@ export async function updateCase(
   if (patch.dateOfBirth !== undefined) row.date_of_birth = patch.dateOfBirth;
   if (patch.notes !== undefined) row.notes = patch.notes;
   if (patch.caseType !== undefined) row.case_type = patch.caseType;
+  if (patch.preferredLanguage !== undefined) row.preferred_language = patch.preferredLanguage;
   if (patch.status !== undefined) row.status = patch.status;
   if (patch.documentUrl !== undefined) row.document_url = patch.documentUrl;
   if (patch.documentFileName !== undefined) row.document_file_name = patch.documentFileName;

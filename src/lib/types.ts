@@ -125,6 +125,8 @@ export interface Case {
   dateOfBirth?: string | null;
   notes?: string | null;
   caseType?: string | null;
+  /** English or Spanish */
+  preferredLanguage?: string | null;
   status: CaseStatus;
   documentUrl?: string;
   documentFileName?: string;
