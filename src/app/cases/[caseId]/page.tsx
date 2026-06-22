@@ -1086,20 +1086,21 @@ export default function CaseDetailPage() {
     } finally { setBusy(false); }
   }
 
-  async function savePreferredLanguage() {
+  async function savePreferredLanguage(next: string) {
     if (!caseId || !c || !user) return;
-    if (!isPreferredLanguage(editPreferredLanguage)) {
+    if (!isPreferredLanguage(next)) {
       setMsg("Select a preferred language.");
       return;
     }
-    if (editPreferredLanguage === (c.preferredLanguage ?? "")) return;
+    if (next === (c.preferredLanguage ?? "")) return;
     setBusy(true);
     setMsg(null);
     try {
       const supabase = getBrowserSupabase();
-      await updateCase(supabase, caseId, { preferredLanguage: editPreferredLanguage });
+      await updateCase(supabase, caseId, { preferredLanguage: next });
       flash("Preferred language saved");
     } catch (e) {
+      setEditPreferredLanguage(c.preferredLanguage ?? "");
       setMsg(e instanceof Error ? e.message : "Save failed");
     } finally {
       setBusy(false);
@@ -1166,12 +1167,6 @@ export default function CaseDetailPage() {
                 <span>DOB {c.dateOfBirth}</span>
               </>
             )}
-            {c.preferredLanguage && (
-              <>
-                <span className="text-border-strong">·</span>
-                <span>{c.preferredLanguage}</span>
-              </>
-            )}
             {c.dateOfIncident && (
               <>
                 <span className="text-border-strong">·</span>
@@ -1204,7 +1199,28 @@ export default function CaseDetailPage() {
             </span>
           </div>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-2.5 py-1.5 text-xs font-medium text-text shadow-sm">
+            <span className="text-text-muted">Language</span>
+            <Select
+              className="w-auto min-w-[5.75rem] border-0 bg-transparent py-0 pl-0 pr-6 text-xs focus:ring-0"
+              disabled={busy}
+              value={editPreferredLanguage}
+              onChange={(e) => {
+                const next = e.target.value;
+                setEditPreferredLanguage(next);
+                if (isPreferredLanguage(next)) void savePreferredLanguage(next);
+              }}
+              aria-label="Preferred language"
+            >
+              <option value="">Select…</option>
+              {PREFERRED_LANGUAGE_OPTIONS.map((lang) => (
+                <option key={lang} value={lang}>
+                  {lang}
+                </option>
+              ))}
+            </Select>
+          </label>
           {c.status === "archived" ? (
             <span
               className="inline-flex cursor-not-allowed items-center justify-center rounded-lg border border-border bg-surface-alt px-4 py-1.5 text-sm font-medium text-text-dim"
@@ -1270,40 +1286,6 @@ export default function CaseDetailPage() {
           </Button>
         </div>
       </div>
-
-      {/* Case details */}
-      <Card className="mt-6">
-        <CardBody>
-          <h3 className="text-sm font-semibold text-text">Case details</h3>
-          <div className="mt-3 max-w-sm">
-            <Label required>Preferred language</Label>
-            <Select
-              className="mt-1.5"
-              value={editPreferredLanguage}
-              onChange={(e) => setEditPreferredLanguage(e.target.value)}
-            >
-              <option value="">Select language…</option>
-              {PREFERRED_LANGUAGE_OPTIONS.map((lang) => (
-                <option key={lang} value={lang}>
-                  {lang}
-                </option>
-              ))}
-            </Select>
-          </div>
-          <Button
-            size="sm"
-            className="mt-3"
-            disabled={
-              busy ||
-              !isPreferredLanguage(editPreferredLanguage) ||
-              editPreferredLanguage === (c.preferredLanguage ?? "")
-            }
-            onClick={() => void savePreferredLanguage()}
-          >
-            Save
-          </Button>
-        </CardBody>
-      </Card>
 
       {/* Assigned contacts */}
       <Card className="mt-6">
