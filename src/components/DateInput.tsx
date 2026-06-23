@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { isoToDisplayDate, parseDisplayDate } from "@/lib/date-input-format";
+import { isoToDisplayDate, parseDisplayDate, sanitizeDisplayDateInput } from "@/lib/date-input-format";
 import { Input } from "@/components/ui";
 
 type DateInputProps = {
@@ -30,13 +30,21 @@ export function DateInput({
     setText(isoToDisplayDate(value));
   }, [value]);
 
-  function commitDisplay(raw: string, forceFormat = false) {
-    setText(raw);
-    const parsed = parseDisplayDate(raw);
+  function commitDisplay(raw: string, onBlur = false) {
+    const sanitized = sanitizeDisplayDateInput(raw);
+    const parsed = parseDisplayDate(sanitized);
     if (parsed !== null) {
       onChange(parsed);
-      if (forceFormat && parsed) setText(isoToDisplayDate(parsed));
+      setText(onBlur ? isoToDisplayDate(parsed) : sanitized);
+      return;
     }
+    if (onBlur) {
+      setText("");
+      onChange("");
+      return;
+    }
+    setText(sanitized);
+    onChange("");
   }
 
   return (
@@ -48,7 +56,7 @@ export function DateInput({
         placeholder="mm/dd/yyyy"
         value={text}
         onChange={(e) => commitDisplay(e.target.value)}
-        onBlur={(e) => commitDisplay(e.target.value, true)}
+        onBlur={() => commitDisplay(text, true)}
         required={required}
         disabled={disabled}
         className="pr-10"
