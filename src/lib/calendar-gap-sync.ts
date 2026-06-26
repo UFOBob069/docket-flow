@@ -37,7 +37,10 @@ export function isBackfillNonSyncEvent(ev: Pick<CalendarEvent, "description">): 
   return (ev.description ?? "").toLowerCase().includes("backfill");
 }
 
-export function eligibilityForGoogleCreate(c: Case, ev: CalendarEvent): { canCreate: boolean; blockReason: string | null } {
+export function eligibilityForGoogleCreate(
+  _caseRecord: Case,
+  ev: CalendarEvent
+): { canCreate: boolean; blockReason: string | null } {
   if (hasGoogleCalendarSync(ev)) {
     return { canCreate: false, blockReason: "Already has Google Calendar linkage" };
   }
@@ -46,9 +49,6 @@ export function eligibilityForGoogleCreate(c: Case, ev: CalendarEvent): { canCre
   }
   if (isGoogleIcsMirrorEvent(ev)) {
     return { canCreate: false, blockReason: "Originally from Google (local mirror only)" };
-  }
-  if (c.status !== "active") {
-    return { canCreate: false, blockReason: "Case archived" };
   }
   if (!ev.included) {
     return { canCreate: false, blockReason: "Excluded from calendar import" };

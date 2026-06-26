@@ -409,7 +409,7 @@ export default function CaseDetailPage() {
   }
 
   async function createGoogleInviteForEvent(sourceEv: CalendarEvent) {
-    if (!caseId || !c || c.status !== "active" || !user || !idToken) return;
+    if (!caseId || !c || !user || !idToken) return;
     if (creatingGoogleInviteId) return;
     if (isGoogleIcsMirrorEvent(sourceEv) || sourceEv.completed || !sourceEv.included) return;
     if (isBackfillNonSyncEvent(sourceEv)) return;
@@ -1130,9 +1130,10 @@ export default function CaseDetailPage() {
           <div className="min-w-0">
             <p className="text-base font-bold uppercase tracking-wide text-warning">Archived case</p>
             <p className="mt-1 text-sm leading-snug text-text-secondary">
-              This matter is off your active docket. Imports and new calendar events are disabled; deadlines stay here
-              for reference until you use <strong className="font-medium text-text">Permanently delete case & deadlines</strong>{" "}
-              below. Google Calendar rows were cleared when the case was archived (any stragglers are removed during delete).
+              This matter is off your active docket. Document import is disabled; you can still add calendar events.
+              Existing deadlines stay here for reference until you use{" "}
+              <strong className="font-medium text-text">Permanently delete case & deadlines</strong> below. Google
+              Calendar rows were cleared when the case was archived (new events you add can sync again).
             </p>
           </div>
           <Button
@@ -1229,18 +1230,16 @@ export default function CaseDetailPage() {
               Import Document with Dates
             </span>
           ) : (
-            <>
-              <Link
-                href={`/cases/${caseId}/import-aso`}
-                className="inline-flex items-center justify-center rounded-lg border border-border bg-white px-4 py-1.5 text-sm font-medium text-text shadow-sm transition hover:bg-surface-alt"
-              >
-                Import Document with Dates
-              </Link>
-              <Button variant="pink" size="sm" disabled={busy} onClick={() => setShowAddEvent(true)}>
-                Add calendar event
-              </Button>
-            </>
+            <Link
+              href={`/cases/${caseId}/import-aso`}
+              className="inline-flex items-center justify-center rounded-lg border border-border bg-white px-4 py-1.5 text-sm font-medium text-text shadow-sm transition hover:bg-surface-alt"
+            >
+              Import Document with Dates
+            </Link>
           )}
+          <Button variant="pink" size="sm" disabled={busy} onClick={() => setShowAddEvent(true)}>
+            Add calendar event
+          </Button>
           <Button
             variant="secondary"
             size="sm"
@@ -1721,8 +1720,7 @@ export default function CaseDetailPage() {
                           Add people
                         </button>
                       )}
-                      {c.status === "active" &&
-                        !isGoogleIcsMirrorEvent(ev) &&
+                      {!isGoogleIcsMirrorEvent(ev) &&
                         !isBackfillNonSyncEvent(ev) &&
                         !ev.completed &&
                         ev.included &&
@@ -1943,8 +1941,7 @@ export default function CaseDetailPage() {
                   onChange={(next) => setEditing({ ...editing, googleColorId: next })}
                 />
               )}
-              {c?.status === "active" &&
-                !isGoogleIcsMirrorEvent(editing) &&
+              {!isGoogleIcsMirrorEvent(editing) &&
                 !isBackfillNonSyncEvent(editing) &&
                 !editing.completed &&
                 editing.included &&

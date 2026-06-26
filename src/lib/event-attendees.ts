@@ -67,12 +67,9 @@ export function contactNamesForIds(ids: string[], contacts: Contact[]): string[]
 }
 
 export function canManageEventAttendees(
-  caseRecord: Case,
+  _caseRecord: Case,
   event: CalendarEvent
 ): { ok: boolean; reason?: string } {
-  if (caseRecord.status !== "active") {
-    return { ok: false, reason: "Case is archived" };
-  }
   if (!event.included) {
     return { ok: false, reason: "Event is excluded from calendar" };
   }
