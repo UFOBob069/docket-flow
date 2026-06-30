@@ -732,11 +732,12 @@ export async function updateCase(
     patch.clientFirstName !== undefined ||
     patch.clientLastName !== undefined
   ) {
-    let existing: {
+    type CaseClientNameRow = {
       client_name: string;
       client_first_name: string | null;
       client_last_name: string | null;
-    } | null = null;
+    };
+    let existing: CaseClientNameRow | null = null;
     if (patch.clientFirstName !== undefined || patch.clientLastName !== undefined) {
       const { data, error: fetchErr } = await supabase
         .from("cases")
@@ -744,7 +745,7 @@ export async function updateCase(
         .eq("id", caseId)
         .maybeSingle();
       if (fetchErr) throw fetchErr;
-      existing = data as typeof existing;
+      existing = (data as CaseClientNameRow | null) ?? null;
     }
     row.client_name = resolvedCaseClientName({
       clientName: patch.clientName ?? existing?.client_name,
