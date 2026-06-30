@@ -114,6 +114,11 @@ export interface Case {
   /** Short label — prefer {@link caseDisplayName} for UI */
   name: string;
   clientName: string;
+  clientFirstName?: string | null;
+  clientLastName?: string | null;
+  /** E.164 client phone synced to Quo */
+  clientPhone?: string | null;
+  quoContactId?: string | null;
   /** Firm case number (required on new cases) */
   caseNumber?: string | null;
   /** @deprecated use caseNumber; kept for legacy data */

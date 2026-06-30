@@ -1,3 +1,4 @@
+import { caseClientName } from "./client-name";
 import type { Case } from "./types";
 
 /** Strip non-digits while typing a new case number. */
@@ -32,7 +33,8 @@ export function caseNumberLookupKeys(
 /** Display title for lists and headers (supports legacy docs without caseNumber). */
 export function caseDisplayName(c: Case): string {
   const num = c.caseNumber?.trim() || c.causeNumber?.trim() || "";
-  if (num && c.clientName) return `${c.clientName} (${num})`;
-  if (c.clientName) return c.clientName;
+  const client = caseClientName(c);
+  if (num && client) return `${client} (${num})`;
+  if (client) return client;
   return c.name || "Case";
 }

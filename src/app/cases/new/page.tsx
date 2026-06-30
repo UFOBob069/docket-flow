@@ -8,6 +8,7 @@ import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
 import { CASE_TYPE_OPTIONS, isCaseType } from "@/lib/case-types";
 import { isPreferredLanguage, PREFERRED_LANGUAGE_OPTIONS } from "@/lib/preferred-languages";
+import { formatClientDisplayName, quoContactDisplayLabel } from "@/lib/client-name";
 import {
   caseDisplayName,
   digitsOnlyCaseNumberInput,
@@ -15,6 +16,8 @@ import {
 } from "@/lib/case-display";
 import { buildCaseAssignedContactIds } from "@/lib/case-attorneys";
 import { parseDisplayDate } from "@/lib/date-input-format";
+import { formatUsPhoneDisplay, normalizeUsPhoneToE164 } from "@/lib/phone-format";
+import { postQuoContactSync } from "@/lib/quo-client";
 import { createSolMilestoneEvents } from "@/lib/event-factory";
 import { buildSolMilestoneSpecs } from "@/lib/sol-milestones";
 import {
@@ -41,7 +44,9 @@ export default function NewCasePage() {
   const [contacts, setContacts] = useState<Contact[]>([]);
 
   const [caseNumber, setCaseNumber] = useState("");
-  const [clientName, setClientName] = useState("");
+  const [clientFirstName, setClientFirstName] = useState("");
+  const [clientLastName, setClientLastName] = useState("");
+  const [clientPhone, setClientPhone] = useState("");
   const [dateOfBirth, setDateOfBirth] = useState("");
   const [dateOfIncident, setDateOfIncident] = useState("");
   const [attorneyId, setAttorneyId] = useState("");
@@ -119,7 +124,7 @@ export default function NewCasePage() {
     try {
       const specs = buildSolMilestoneSpecs(sol, doi, solRemindersMinutes);
       const cn = caseNumber.trim();
-      const cl = clientName.trim();
+      const cl = formatClientDisplayName(clientFirstName, clientLastName);
       const label = cn && cl ? `${cl} (${cn})` : null;
       return specs.map((s) => ({
         date: s.date,
@@ -128,17 +133,24 @@ export default function NewCasePage() {
     } catch {
       return [];
     }
-  }, [dateOfIncident, solDate, solRemindersMinutes, caseNumber, clientName]);
+  }, [dateOfIncident, solDate, solRemindersMinutes, caseNumber, clientFirstName, clientLastName]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!user?.id || !idToken) return;
     const cn = caseNumber.trim();
-    const cl = clientName.trim();
+    const first = clientFirstName.trim();
+    const last = clientLastName.trim();
+    const cl = formatClientDisplayName(first, last);
     const dob = dateOfBirth.trim();
     const doi = dateOfIncident.trim();
-    if (!cn || !cl || !dob || !doi) {
-      setErr("Case number, client name, date of birth, and date of incident are required.");
+    if (!cn || !first || !last || !dob || !doi) {
+      setErr("Case number, client first name, last name, date of birth, and date of incident are required.");
+      return;
+    }
+    const phoneE164 = normalizeUsPhoneToE164(clientPhone);
+    if (!phoneE164) {
+      setErr("Enter a valid US client phone number (10 digits).");
       return;
     }
     if (!parseDisplayDate(dob) || !parseDisplayDate(doi)) {
@@ -205,6 +217,9 @@ export default function NewCasePage() {
       const caseId = await createCase(supabase, user.id, {
         name: displayName,
         clientName: cl,
+        clientFirstName: first,
+        clientLastName: last,
+        clientPhone: phoneE164,
         caseNumber: cn,
         causeNumber: cn,
         dateOfBirth: dob,
@@ -280,15 +295,34 @@ export default function NewCasePage() {
         }
       }
 
+      const quoResult = await postQuoContactSync(
+        {
+          caseId,
+          firstName: first,
+          lastName: last,
+          caseNumber: cn,
+          phone: clientPhone,
+        },
+        idToken
+      );
+      let quoActivityNote = "";
+      if (quoResult.ok && quoResult.synced) {
+        quoActivityNote = " Quo client contact created.";
+      } else if (quoResult.ok && quoResult.reason === "quo_not_configured") {
+        quoActivityNote = "";
+      } else if (!quoResult.ok) {
+        quoActivityNote = ` Quo contact not created: ${quoResult.error ?? "unknown error"}.`;
+      }
+
       await logActivity(supabase, user.id, {
         caseId,
         caseName: displayName,
         action: "case_created",
-        description: `Created case with SOL milestones ending ${sol} (${solEvents.length} checkpoints)`,
+        description: `Created case with SOL milestones ending ${sol} (${solEvents.length} checkpoints).${quoActivityNote}`,
         userEmail: user.email ?? "",
       });
 
-      router.push(`/cases/${caseId}`);
+      router.push(`/cases/${caseId}${quoActivityNote.includes("not created") ? "?quo=failed" : ""}`);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Could not create case");
     } finally {
@@ -350,9 +384,53 @@ export default function NewCasePage() {
                 </p>
               )}
             </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <Label required>Client first name</Label>
+                <Input
+                  className="mt-1.5"
+                  value={clientFirstName}
+                  onChange={(e) => setClientFirstName(e.target.value)}
+                  autoComplete="given-name"
+                  required
+                />
+              </div>
+              <div>
+                <Label required>Client last name</Label>
+                <Input
+                  className="mt-1.5"
+                  value={clientLastName}
+                  onChange={(e) => setClientLastName(e.target.value)}
+                  autoComplete="family-name"
+                  required
+                />
+              </div>
+            </div>
             <div>
-              <Label required>Client name</Label>
-              <Input className="mt-1.5" value={clientName} onChange={(e) => setClientName(e.target.value)} required />
+              <Label required>Client phone</Label>
+              <Input
+                className="mt-1.5"
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                value={clientPhone}
+                onChange={(e) => setClientPhone(formatUsPhoneDisplay(e.target.value))}
+                placeholder="(555) 555-5555"
+                required
+              />
+              <p className="mt-1 text-xs text-text-dim">
+                Creates a Quo contact as{" "}
+                <span className="font-medium text-text-secondary">
+                  {clientFirstName.trim() || clientLastName.trim() || caseNumber.trim()
+                    ? quoContactDisplayLabel(
+                        clientFirstName || "First",
+                        clientLastName || "Last",
+                        caseNumber.trim() || "case#"
+                      )
+                    : "First Last case#"}
+                </span>{" "}
+                (case number after last name).
+              </p>
             </div>
             <div>
               <Label required>Preferred language</Label>

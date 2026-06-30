@@ -10,6 +10,7 @@ import type {
   EventKind,
 } from "@/lib/types";
 import { caseDisplayName, caseNumberLookupKeys } from "@/lib/case-display";
+import { resolvedCaseClientName } from "@/lib/client-name";
 import type { CaseTrackerPipeline } from "@/lib/case-tracker-pipeline";
 import { normalizeGoogleCalendarInviteColorId } from "@/lib/google-calendar-invite-colors";
 
@@ -100,6 +101,10 @@ function caseFromRow(r: Record<string, unknown>): Case {
     ownerId: r.user_id as string,
     name: r.name as string,
     clientName: r.client_name as string,
+    clientFirstName: (r.client_first_name as string) ?? null,
+    clientLastName: (r.client_last_name as string) ?? null,
+    clientPhone: (r.client_phone as string) ?? null,
+    quoContactId: (r.quo_contact_id as string) ?? null,
     caseNumber: (r.case_number as string) ?? null,
     causeNumber: (r.cause_number as string) ?? null,
     court: (r.court as string) ?? null,
@@ -669,10 +674,25 @@ export async function createCase(
   }
 
   const now = Date.now();
+  const clientFirst = input.clientFirstName?.trim() || null;
+  const clientLast = input.clientLastName?.trim() || null;
+  const clientName = resolvedCaseClientName({
+    clientName: input.clientName,
+    clientFirstName: clientFirst,
+    clientLastName: clientLast,
+  });
+  if (!clientName) {
+    throw new Error("Client name is required.");
+  }
+
   const row = clean({
     user_id: ownerId,
     name: input.name.trim(),
-    client_name: input.clientName.trim(),
+    client_name: clientName,
+    client_first_name: clientFirst,
+    client_last_name: clientLast,
+    client_phone: input.clientPhone?.trim() || null,
+    quo_contact_id: input.quoContactId?.trim() || null,
     case_number: input.caseNumber?.trim() || null,
     cause_number: input.causeNumber?.trim() || null,
     court: input.court?.trim() || null,
@@ -702,7 +722,37 @@ export async function updateCase(
 ): Promise<void> {
   const row: Record<string, unknown> = { updated_at: Date.now() };
   if (patch.name !== undefined) row.name = patch.name;
-  if (patch.clientName !== undefined) row.client_name = patch.clientName;
+  if (patch.clientFirstName !== undefined) row.client_first_name = patch.clientFirstName;
+  if (patch.clientLastName !== undefined) row.client_last_name = patch.clientLastName;
+  if (patch.clientPhone !== undefined) row.client_phone = patch.clientPhone;
+  if (patch.quoContactId !== undefined) row.quo_contact_id = patch.quoContactId;
+
+  if (
+    patch.clientName !== undefined ||
+    patch.clientFirstName !== undefined ||
+    patch.clientLastName !== undefined
+  ) {
+    let existing: {
+      client_name: string;
+      client_first_name: string | null;
+      client_last_name: string | null;
+    } | null = null;
+    if (patch.clientFirstName !== undefined || patch.clientLastName !== undefined) {
+      const { data, error: fetchErr } = await supabase
+        .from("cases")
+        .select("client_name, client_first_name, client_last_name")
+        .eq("id", caseId)
+        .maybeSingle();
+      if (fetchErr) throw fetchErr;
+      existing = data as typeof existing;
+    }
+    row.client_name = resolvedCaseClientName({
+      clientName: patch.clientName ?? existing?.client_name,
+      clientFirstName: patch.clientFirstName ?? existing?.client_first_name,
+      clientLastName: patch.clientLastName ?? existing?.client_last_name,
+    });
+  }
+
   if (patch.caseNumber !== undefined) row.case_number = patch.caseNumber;
   if (patch.causeNumber !== undefined) row.cause_number = patch.causeNumber;
   if (patch.court !== undefined) row.court = patch.court;
