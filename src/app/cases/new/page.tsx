@@ -46,6 +46,7 @@ export default function NewCasePage() {
   const [caseNumber, setCaseNumber] = useState("");
   const [clientFirstName, setClientFirstName] = useState("");
   const [clientLastName, setClientLastName] = useState("");
+  const [clientAlreadyInQuo, setClientAlreadyInQuo] = useState<"" | "yes" | "no">("");
   const [clientPhone, setClientPhone] = useState("");
   const [dateOfBirth, setDateOfBirth] = useState("");
   const [dateOfIncident, setDateOfIncident] = useState("");
@@ -148,8 +149,13 @@ export default function NewCasePage() {
       setErr("Case number, client first name, last name, date of birth, and date of incident are required.");
       return;
     }
-    const phoneE164 = normalizeUsPhoneToE164(clientPhone);
-    if (!phoneE164) {
+    if (!clientAlreadyInQuo) {
+      setErr("Indicate whether this client is already a contact in Quo.");
+      return;
+    }
+    const phoneE164 =
+      clientAlreadyInQuo === "no" ? normalizeUsPhoneToE164(clientPhone) : null;
+    if (clientAlreadyInQuo === "no" && !phoneE164) {
       setErr("Enter a valid US client phone number (10 digits).");
       return;
     }
@@ -295,23 +301,27 @@ export default function NewCasePage() {
         }
       }
 
-      const quoResult = await postQuoContactSync(
-        {
-          caseId,
-          firstName: first,
-          lastName: last,
-          caseNumber: cn,
-          phone: clientPhone,
-        },
-        idToken
-      );
       let quoActivityNote = "";
-      if (quoResult.ok && quoResult.synced) {
-        quoActivityNote = " Quo client contact created.";
-      } else if (quoResult.ok && quoResult.reason === "quo_not_configured") {
-        quoActivityNote = "";
-      } else if (!quoResult.ok) {
-        quoActivityNote = ` Quo contact not created: ${quoResult.error ?? "unknown error"}.`;
+      if (clientAlreadyInQuo === "no") {
+        const quoResult = await postQuoContactSync(
+          {
+            caseId,
+            firstName: first,
+            lastName: last,
+            caseNumber: cn,
+            phone: clientPhone,
+          },
+          idToken
+        );
+        if (quoResult.ok && quoResult.synced) {
+          quoActivityNote = " Quo client contact created.";
+        } else if (quoResult.ok && quoResult.reason === "quo_not_configured") {
+          quoActivityNote = "";
+        } else if (!quoResult.ok) {
+          quoActivityNote = ` Quo contact not created: ${quoResult.error ?? "unknown error"}.`;
+        }
+      } else {
+        quoActivityNote = " Client already in Quo; skipped DocketFlow contact create.";
       }
 
       await logActivity(supabase, user.id, {
@@ -407,31 +417,68 @@ export default function NewCasePage() {
               </div>
             </div>
             <div>
-              <Label required>Client phone</Label>
-              <Input
-                className="mt-1.5"
-                type="tel"
-                inputMode="tel"
-                autoComplete="tel"
-                value={clientPhone}
-                onChange={(e) => setClientPhone(formatUsPhoneDisplay(e.target.value))}
-                placeholder="(555) 555-5555"
-                required
-              />
-              <p className="mt-1 text-xs text-text-dim">
-                Creates a Quo contact as{" "}
-                <span className="font-medium text-text-secondary">
-                  {clientFirstName.trim() || clientLastName.trim() || caseNumber.trim()
-                    ? quoContactDisplayLabel(
-                        clientFirstName || "First",
-                        clientLastName || "Last",
-                        caseNumber.trim() || "case#"
-                      )
-                    : "First Last case#"}
-                </span>{" "}
-                (case number after last name).
-              </p>
+              <Label required>Contact already in Quo?</Label>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setClientAlreadyInQuo("yes");
+                    setClientPhone("");
+                  }}
+                  className={`rounded-lg border px-4 py-2 text-sm font-medium transition ${
+                    clientAlreadyInQuo === "yes"
+                      ? "border-primary bg-primary-light text-primary"
+                      : "border-border bg-white text-text hover:bg-surface-alt"
+                  }`}
+                >
+                  Yes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setClientAlreadyInQuo("no")}
+                  className={`rounded-lg border px-4 py-2 text-sm font-medium transition ${
+                    clientAlreadyInQuo === "no"
+                      ? "border-primary bg-primary-light text-primary"
+                      : "border-border bg-white text-text hover:bg-surface-alt"
+                  }`}
+                >
+                  No — create in Quo
+                </button>
+              </div>
+              {clientAlreadyInQuo === "yes" && (
+                <p className="mt-2 text-xs text-text-muted">
+                  No phone number needed. DocketFlow will not create a new Quo contact for this case.
+                </p>
+              )}
             </div>
+            {clientAlreadyInQuo === "no" && (
+              <div>
+                <Label required>Client phone</Label>
+                <Input
+                  className="mt-1.5"
+                  type="tel"
+                  inputMode="tel"
+                  autoComplete="tel"
+                  value={clientPhone}
+                  onChange={(e) => setClientPhone(formatUsPhoneDisplay(e.target.value))}
+                  placeholder="(555) 555-5555"
+                  required
+                />
+                <p className="mt-1 text-xs text-text-dim">
+                  Creates a Quo contact as{" "}
+                  <span className="font-medium text-text-secondary">
+                    {clientFirstName.trim() || clientLastName.trim() || caseNumber.trim()
+                      ? quoContactDisplayLabel(
+                          clientFirstName || "First",
+                          clientLastName || "Last",
+                          caseNumber.trim() || "case#"
+                        )
+                      : "First Last case#"}
+                  </span>{" "}
+                  (case number after last name).
+                </p>
+              </div>
+            )}
             <div>
               <Label required>Preferred language</Label>
               <Select
