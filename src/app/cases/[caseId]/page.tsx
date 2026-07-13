@@ -77,6 +77,7 @@ import { PageSkeleton } from "@/components/PageSkeleton";
 import { GoogleCalendarInviteColorPicker } from "@/components/GoogleCalendarInviteColorPicker";
 import { ReminderMinutesEditor } from "@/components/ReminderMinutesEditor";
 import { FiveMinuteTimeSelect } from "@/components/FiveMinuteTimeSelect";
+import { isoToDisplayDate } from "@/lib/date-input-format";
 import {
   isEndTimeAfterStartTime,
   isoToLocalDateTimeParts,
@@ -254,6 +255,7 @@ export default function CaseDetailPage() {
   const [reassignExtraIds, setReassignExtraIds] = useState<string[]>([]);
   const [editPreferredLanguage, setEditPreferredLanguage] = useState("");
   const [editDateOfBirth, setEditDateOfBirth] = useState("");
+  const [editingDob, setEditingDob] = useState(false);
 
   const [verifyBusy, setVerifyBusy] = useState(false);
   const [verifyResult, setVerifyResult] = useState<VerifyResponse | null>(null);
@@ -311,9 +313,9 @@ export default function CaseDetailPage() {
   useEffect(() => {
     if (c) {
       setEditPreferredLanguage(c.preferredLanguage ?? "");
-      setEditDateOfBirth(c.dateOfBirth ?? "");
+      if (!editingDob) setEditDateOfBirth(c.dateOfBirth ?? "");
     }
-  }, [c?.id, c?.preferredLanguage, c?.dateOfBirth]);
+  }, [c?.id, c?.preferredLanguage, c?.dateOfBirth, editingDob]);
 
   useEffect(() => {
     if (!supabaseReady || !user || !c) {
@@ -1112,18 +1114,22 @@ export default function CaseDetailPage() {
     }
   }
 
-  async function saveDateOfBirth(next: string) {
+  async function saveDateOfBirth() {
     if (!caseId || !c || !user) return;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(next)) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(editDateOfBirth)) {
       setMsg("Enter a valid date of birth (mm/dd/yyyy).");
       return;
     }
-    if (next === (c.dateOfBirth ?? "")) return;
+    if (editDateOfBirth === (c.dateOfBirth ?? "")) {
+      setEditingDob(false);
+      return;
+    }
     setBusy(true);
     setMsg(null);
     try {
       const supabase = getBrowserSupabase();
-      await updateCase(supabase, caseId, { dateOfBirth: next });
+      await updateCase(supabase, caseId, { dateOfBirth: editDateOfBirth });
+      setEditingDob(false);
       flash("Date of birth saved");
     } catch (e) {
       setEditDateOfBirth(c.dateOfBirth ?? "");
@@ -1131,6 +1137,12 @@ export default function CaseDetailPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function cancelEditDateOfBirth() {
+    setEditDateOfBirth(c?.dateOfBirth ?? "");
+    setEditingDob(false);
+    setMsg(null);
   }
 
   if (!hydrated) return <PageSkeleton />;
@@ -1188,6 +1200,12 @@ export default function CaseDetailPage() {
           <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-text-muted">
             {c.name && c.name !== caseDisplayName(c) && <span>{c.name}</span>}
             {c.court && <><span className="text-border-strong">·</span><span>{c.court}</span></>}
+            {c.dateOfBirth && (
+              <>
+                <span className="text-border-strong">·</span>
+                <span>DOB {isoToDisplayDate(c.dateOfBirth)}</span>
+              </>
+            )}
             {c.dateOfIncident && (
               <>
                 <span className="text-border-strong">·</span>
@@ -1221,20 +1239,42 @@ export default function CaseDetailPage() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <label className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-2.5 py-1.5 text-xs font-medium text-text shadow-sm">
-            <span className="shrink-0 text-text-muted">DOB</span>
-            <DateInput
-              className="w-38"
-              value={editDateOfBirth}
+          {!editingDob ? (
+            <Button
+              variant="secondary"
+              size="sm"
               disabled={busy}
-              inputClassName="border-0 bg-transparent px-0 py-0 text-xs shadow-none focus:ring-0"
-              onChange={(iso) => {
-                if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return;
-                setEditDateOfBirth(iso);
-                void saveDateOfBirth(iso);
+              onClick={() => {
+                setEditDateOfBirth(c.dateOfBirth ?? "");
+                setEditingDob(true);
               }}
-            />
-          </label>
+            >
+              {c.dateOfBirth ? "Edit DOB" : "Add DOB"}
+            </Button>
+          ) : (
+            <div className="inline-flex flex-wrap items-center gap-2 rounded-lg border border-border bg-white px-2.5 py-1.5 shadow-sm">
+              <span className="shrink-0 text-xs font-medium text-text-muted">DOB</span>
+              <DateInput
+                className="w-38"
+                value={editDateOfBirth}
+                disabled={busy}
+                inputClassName="border-0 bg-transparent px-0 py-0 text-xs shadow-none focus:ring-0"
+                onChange={(iso) => {
+                  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) setEditDateOfBirth(iso);
+                }}
+              />
+              <Button
+                size="sm"
+                disabled={busy || !/^\d{4}-\d{2}-\d{2}$/.test(editDateOfBirth)}
+                onClick={() => void saveDateOfBirth()}
+              >
+                Save
+              </Button>
+              <Button variant="ghost" size="sm" disabled={busy} onClick={cancelEditDateOfBirth}>
+                Cancel
+              </Button>
+            </div>
+          )}
           <label className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-2.5 py-1.5 text-xs font-medium text-text shadow-sm">
             <span className="text-text-muted">Language</span>
             <Select
