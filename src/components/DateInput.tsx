@@ -9,6 +9,7 @@ type DateInputProps = {
   value: string;
   onChange: (iso: string) => void;
   className?: string;
+  inputClassName?: string;
   required?: boolean;
   min?: string;
   disabled?: boolean;
@@ -18,6 +19,7 @@ export function DateInput({
   value,
   onChange,
   className = "",
+  inputClassName = "",
   required,
   min,
   disabled,
@@ -59,7 +61,7 @@ export function DateInput({
         onBlur={() => commitDisplay(text, true)}
         required={required}
         disabled={disabled}
-        className="pr-10"
+        className={`pr-10 ${inputClassName}`}
         aria-describedby={`${pickerId}-hint`}
       />
       <input

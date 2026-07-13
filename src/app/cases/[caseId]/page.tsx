@@ -72,6 +72,7 @@ import { validateEventScheduleAgainstFederalHolidays } from "@/lib/federal-holid
 import type { MonthlyCalendarEventChip } from "@/components/MonthlyEventCalendar";
 import { FixedRemindersReadout } from "@/components/FixedRemindersReadout";
 import { MonthlyEventCalendar } from "@/components/MonthlyEventCalendar";
+import { DateInput } from "@/components/DateInput";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { GoogleCalendarInviteColorPicker } from "@/components/GoogleCalendarInviteColorPicker";
 import { ReminderMinutesEditor } from "@/components/ReminderMinutesEditor";
@@ -252,6 +253,7 @@ export default function CaseDetailPage() {
   const [reassignParalegalId, setReassignParalegalId] = useState("");
   const [reassignExtraIds, setReassignExtraIds] = useState<string[]>([]);
   const [editPreferredLanguage, setEditPreferredLanguage] = useState("");
+  const [editDateOfBirth, setEditDateOfBirth] = useState("");
 
   const [verifyBusy, setVerifyBusy] = useState(false);
   const [verifyResult, setVerifyResult] = useState<VerifyResponse | null>(null);
@@ -307,8 +309,11 @@ export default function CaseDetailPage() {
   }, [user, loading, supabaseReady, router]);
 
   useEffect(() => {
-    if (c) setEditPreferredLanguage(c.preferredLanguage ?? "");
-  }, [c?.id, c?.preferredLanguage]);
+    if (c) {
+      setEditPreferredLanguage(c.preferredLanguage ?? "");
+      setEditDateOfBirth(c.dateOfBirth ?? "");
+    }
+  }, [c?.id, c?.preferredLanguage, c?.dateOfBirth]);
 
   useEffect(() => {
     if (!supabaseReady || !user || !c) {
@@ -1107,6 +1112,27 @@ export default function CaseDetailPage() {
     }
   }
 
+  async function saveDateOfBirth(next: string) {
+    if (!caseId || !c || !user) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(next)) {
+      setMsg("Enter a valid date of birth (mm/dd/yyyy).");
+      return;
+    }
+    if (next === (c.dateOfBirth ?? "")) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const supabase = getBrowserSupabase();
+      await updateCase(supabase, caseId, { dateOfBirth: next });
+      flash("Date of birth saved");
+    } catch (e) {
+      setEditDateOfBirth(c.dateOfBirth ?? "");
+      setMsg(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!hydrated) return <PageSkeleton />;
   if (!isSupabaseConfigured()) return <PageWrapper><p className="text-text-muted">Configure Supabase.</p></PageWrapper>;
   if (!user) return null;
@@ -1162,12 +1188,6 @@ export default function CaseDetailPage() {
           <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-text-muted">
             {c.name && c.name !== caseDisplayName(c) && <span>{c.name}</span>}
             {c.court && <><span className="text-border-strong">·</span><span>{c.court}</span></>}
-            {c.dateOfBirth && (
-              <>
-                <span className="text-border-strong">·</span>
-                <span>DOB {c.dateOfBirth}</span>
-              </>
-            )}
             {c.dateOfIncident && (
               <>
                 <span className="text-border-strong">·</span>
@@ -1201,6 +1221,20 @@ export default function CaseDetailPage() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <label className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-2.5 py-1.5 text-xs font-medium text-text shadow-sm">
+            <span className="shrink-0 text-text-muted">DOB</span>
+            <DateInput
+              className="w-38"
+              value={editDateOfBirth}
+              disabled={busy}
+              inputClassName="border-0 bg-transparent px-0 py-0 text-xs shadow-none focus:ring-0"
+              onChange={(iso) => {
+                if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return;
+                setEditDateOfBirth(iso);
+                void saveDateOfBirth(iso);
+              }}
+            />
+          </label>
           <label className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-2.5 py-1.5 text-xs font-medium text-text shadow-sm">
             <span className="text-text-muted">Language</span>
             <Select
