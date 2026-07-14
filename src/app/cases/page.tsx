@@ -221,12 +221,18 @@ export default function CasesListPage() {
   };
 
   const filtered = useMemo(() => {
-    let list = cases.filter((c) =>
-      caseMatchesPipelineStatusFilter(pipelineByCaseId.get(c.id), statusFilter)
-    );
-    list = list.filter((c) =>
-      caseMatchesStageFilters(pipelineByCaseId.get(c.id), stageFilters)
-    );
+    const q = search.trim().toLowerCase();
+    // Search looks across every case; Active/Closed (and stage) only apply when search is empty.
+    let list = q
+      ? cases
+      : cases.filter((c) =>
+          caseMatchesPipelineStatusFilter(pipelineByCaseId.get(c.id), statusFilter)
+        );
+    if (!q) {
+      list = list.filter((c) =>
+        caseMatchesStageFilters(pipelineByCaseId.get(c.id), stageFilters)
+      );
+    }
     list = list.filter((c) => caseMatchesAssignedRole(c, attorneyFilterIds, "attorney", contactById));
     list = list.filter((c) => caseMatchesAssignedRole(c, paralegalFilterIds, "paralegal", contactById));
     if (eventKindFilters.length) {
@@ -241,7 +247,6 @@ export default function CasesListPage() {
         return evs.some((e) => eventInDateRange(e, timelineStart, timelineEnd));
       });
     }
-    const q = search.trim().toLowerCase();
     if (q) {
       list = list.filter((c) => {
         const assignBits = c.assignedContactIds
@@ -253,6 +258,8 @@ export default function CasesListPage() {
         const hay = [
           c.name,
           c.clientName,
+          c.clientFirstName ?? "",
+          c.clientLastName ?? "",
           c.caseNumber ?? "",
           c.causeNumber ?? "",
           c.notes ?? "",
@@ -327,13 +334,15 @@ export default function CasesListPage() {
       useEventDateFilter
   );
 
-  const casesSubtitle = hasSecondaryFilters
-    ? `${filtered.length} shown · ${cases.length} total`
-    : statusFilter === "active"
-      ? `${filtered.length} active case${filtered.length !== 1 ? "s" : ""}`
-      : statusFilter === "closed"
-        ? `${filtered.length} closed case${filtered.length !== 1 ? "s" : ""}`
-        : `${cases.length} case${cases.length !== 1 ? "s" : ""} (${pipelineActiveCount} active · ${pipelineClosedCount} closed)`;
+  const casesSubtitle = search.trim()
+    ? `${filtered.length} match${filtered.length !== 1 ? "es" : ""} · searching all cases`
+    : hasSecondaryFilters
+      ? `${filtered.length} shown · ${cases.length} total`
+      : statusFilter === "active"
+        ? `${filtered.length} active case${filtered.length !== 1 ? "s" : ""}`
+        : statusFilter === "closed"
+          ? `${filtered.length} closed case${filtered.length !== 1 ? "s" : ""}`
+          : `${cases.length} case${cases.length !== 1 ? "s" : ""} (${pipelineActiveCount} active · ${pipelineClosedCount} closed)`;
 
   if (!hydrated) return <PageSkeleton />;
 
@@ -365,7 +374,7 @@ export default function CasesListPage() {
           className="min-w-72 flex-1"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search title, case, client..."
+          placeholder="Search all cases (title, case #, client…)"
         />
         <button
           type="button"
