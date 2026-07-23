@@ -502,7 +502,13 @@ export default function NewCasePage() {
                 ))}
               </Select>
             </div>
-            <label className="flex items-start gap-3 rounded-lg border border-border bg-white px-3 py-3 text-sm text-text">
+            <label
+              className={`flex items-start gap-3 rounded-lg border px-3 py-3 text-sm ${
+                needsTranslator
+                  ? "border-warning/40 bg-warning-light text-warning"
+                  : "border-border bg-white text-text"
+              }`}
+            >
               <input
                 type="checkbox"
                 className="mt-0.5 h-4 w-4 rounded border-border text-primary focus:ring-primary/30"
@@ -510,8 +516,10 @@ export default function NewCasePage() {
                 onChange={(e) => setNeedsTranslator(e.target.checked)}
               />
               <span>
-                <span className="font-medium">Needs translator</span>
-                <span className="mt-0.5 block text-xs text-text-muted">
+                <span className={`font-semibold ${needsTranslator ? "uppercase tracking-wide" : ""}`}>
+                  Translator Required
+                </span>
+                <span className={`mt-0.5 block text-xs ${needsTranslator ? "text-warning/80" : "text-text-muted"}`}>
                   Defaults off for English, on for Spanish — change if needed.
                 </span>
               </span>

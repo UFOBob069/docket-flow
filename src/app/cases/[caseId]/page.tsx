@@ -1124,7 +1124,7 @@ export default function CaseDetailPage() {
     try {
       const supabase = getBrowserSupabase();
       await updateCase(supabase, caseId, { needsTranslator: next });
-      flash(next ? "Marked as needs translator" : "Translator not needed");
+      flash(next ? "Marked Translator Required" : "Translator Required cleared");
     } catch (e) {
       setEditNeedsTranslator(Boolean(c.needsTranslator));
       setMsg(e instanceof Error ? e.message : "Save failed");
@@ -1226,10 +1226,9 @@ export default function CaseDetailPage() {
               </>
             )}
             {c.needsTranslator && (
-              <>
-                <span className="text-border-strong">·</span>
-                <span className="font-medium text-warning">Needs translator</span>
-              </>
+              <Badge variant="warning" className="text-xs font-bold uppercase tracking-wide">
+                Translator Required
+              </Badge>
             )}
             {c.dateOfIncident && (
               <>
@@ -1321,7 +1320,13 @@ export default function CaseDetailPage() {
               ))}
             </Select>
           </label>
-          <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-white px-2.5 py-1.5 text-xs font-medium text-text shadow-sm">
+          <label
+            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium shadow-sm ${
+              editNeedsTranslator
+                ? "border-warning/40 bg-warning-light text-warning"
+                : "border-border bg-white text-text"
+            }`}
+          >
             <input
               type="checkbox"
               className="h-3.5 w-3.5 rounded border-border text-primary focus:ring-primary/30"
@@ -1332,9 +1337,11 @@ export default function CaseDetailPage() {
                 setEditNeedsTranslator(next);
                 void saveNeedsTranslator(next);
               }}
-              aria-label="Needs translator"
+              aria-label="Translator Required"
             />
-            <span className="text-text-muted">Translator</span>
+            <span className={editNeedsTranslator ? "font-bold uppercase tracking-wide" : "text-text-muted"}>
+              Translator Required
+            </span>
           </label>
           {c.status === "archived" ? (
             <span
