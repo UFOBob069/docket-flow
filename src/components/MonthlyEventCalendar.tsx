@@ -181,6 +181,7 @@ export function MonthlyEventCalendar({
                     ) : ch.href ? (
                       <Link
                         href={ch.href}
+                        prefetch={false}
                         className={`block rounded border px-0.5 py-0.5 text-left hover:bg-surface-alt ${
                           ch.overdue && !ch.completed
                             ? "border-danger/40 bg-danger/[0.06]"

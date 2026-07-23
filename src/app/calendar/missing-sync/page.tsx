@@ -367,7 +367,7 @@ export default function MissingCalendarSyncPage() {
                         )}
                       </div>
                       <p className="mt-1 text-xs text-text-muted">
-                        <Link href={`/cases/${c.id}`} className="font-medium text-primary hover:underline">
+                        <Link href={`/cases/${c.id}`} prefetch={false} className="font-medium text-primary hover:underline">
                           {caseDisplayName(c)}
                         </Link>
                         {c.clientName && c.clientName !== caseDisplayName(c) && (

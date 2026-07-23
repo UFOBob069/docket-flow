@@ -578,7 +578,7 @@ export default function CalendarPage() {
             const par = assign[1] ? contactById.get(assign[1]) : undefined;
             const kind = eventKindLabel(e.eventKind);
             return (
-              <Link key={`${c.id}-${e.id}`} href={`/cases/${c.id}`}>
+              <Link key={`${c.id}-${e.id}`} href={`/cases/${c.id}`} prefetch={false}>
                 <Card className="transition-shadow hover:shadow-md">
                   <CardBody className="py-4!">
                     <div className="flex flex-wrap items-start justify-between gap-3">

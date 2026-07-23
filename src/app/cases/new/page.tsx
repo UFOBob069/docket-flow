@@ -58,6 +58,7 @@ export default function NewCasePage() {
   const [notes, setNotes] = useState("");
   const [caseType, setCaseType] = useState("");
   const [preferredLanguage, setPreferredLanguage] = useState("");
+  const [needsTranslator, setNeedsTranslator] = useState(false);
   const [injuries, setInjuries] = useState("");
   const [caseDescription, setCaseDescription] = useState("");
   const [solDate, setSolDate] = useState("");
@@ -233,6 +234,7 @@ export default function NewCasePage() {
         notes: notes.trim() || null,
         caseType,
         preferredLanguage,
+        needsTranslator,
         responsibleAttorneyContactId: attorneyId,
         eventAttorneyContactId: eventAttorneyId || null,
         assignedContactIds,
@@ -484,7 +486,12 @@ export default function NewCasePage() {
               <Select
                 className="mt-1.5"
                 value={preferredLanguage}
-                onChange={(e) => setPreferredLanguage(e.target.value)}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setPreferredLanguage(next);
+                  if (next === "English") setNeedsTranslator(false);
+                  else if (next === "Spanish") setNeedsTranslator(true);
+                }}
                 required
               >
                 <option value="">Select language…</option>
@@ -495,6 +502,20 @@ export default function NewCasePage() {
                 ))}
               </Select>
             </div>
+            <label className="flex items-start gap-3 rounded-lg border border-border bg-white px-3 py-3 text-sm text-text">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 rounded border-border text-primary focus:ring-primary/30"
+                checked={needsTranslator}
+                onChange={(e) => setNeedsTranslator(e.target.checked)}
+              />
+              <span>
+                <span className="font-medium">Needs translator</span>
+                <span className="mt-0.5 block text-xs text-text-muted">
+                  Defaults off for English, on for Spanish — change if needed.
+                </span>
+              </span>
+            </label>
             <div>
               <Label required>Date of birth</Label>
               <DateInput

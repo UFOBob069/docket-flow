@@ -132,6 +132,8 @@ export interface Case {
   caseType?: string | null;
   /** English or Spanish */
   preferredLanguage?: string | null;
+  /** Client needs a translator for communications */
+  needsTranslator?: boolean;
   status: CaseStatus;
   documentUrl?: string;
   documentFileName?: string;

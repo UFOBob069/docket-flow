@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { addDays, format, parseISO } from "date-fns";
@@ -129,52 +129,74 @@ export default function CasesListPage() {
     return m;
   }, [bundled]);
 
-  const loadBundled = useCallback(() => {
+  const loadBundled = useCallback(async () => {
     if (!user?.id) return;
+    try {
+      const supabase = getBrowserSupabase();
+      const rows = await fetchCasesWithEvents(supabase, user.id);
+      setBundled(rows);
+      try {
+        const pipeline = await fetchCaseTrackerPipelineByCaseIds(
+          supabase,
+          rows.map((r) => r.case.id)
+        );
+        setPipelineByCaseId(pipeline);
+      } catch (e) {
+        console.warn("[cases] fetchCaseTrackerPipeline", e);
+        setPipelineByCaseId(new Map());
+      }
+    } catch (e) {
+      console.warn("[cases] fetchCasesWithEvents", e);
+    }
+  }, [user?.id]);
+
+  const loadBundledRef = useRef(loadBundled);
+  loadBundledRef.current = loadBundled;
+  const loadInFlightRef = useRef(false);
+  const loadQueuedRef = useRef(false);
+
+  const requestLoadBundled = useCallback(() => {
+    if (loadInFlightRef.current) {
+      loadQueuedRef.current = true;
+      return;
+    }
+    loadInFlightRef.current = true;
     void (async () => {
       try {
-        const supabase = getBrowserSupabase();
-        const rows = await fetchCasesWithEvents(supabase, user.id);
-        setBundled(rows);
-        try {
-          const pipeline = await fetchCaseTrackerPipelineByCaseIds(
-            supabase,
-            rows.map((r) => r.case.id)
-          );
-          setPipelineByCaseId(pipeline);
-        } catch (e) {
-          console.warn("[cases] fetchCaseTrackerPipeline", e);
-          setPipelineByCaseId(new Map());
+        await loadBundledRef.current();
+      } finally {
+        loadInFlightRef.current = false;
+        if (loadQueuedRef.current) {
+          loadQueuedRef.current = false;
+          requestLoadBundled();
         }
-      } catch (e) {
-        console.warn("[cases] fetchCasesWithEvents", e);
       }
     })();
-  }, [user?.id]);
+  }, []);
 
   useEffect(() => {
     if (!supabaseReady || loading || !user) return;
     const supabase = getBrowserSupabase();
-    loadBundled();
-    const unsubCases = subscribeCases(supabase, user.id, loadBundled);
-    const unsubEvents = subscribeCaseEventsFirm(supabase, user.id, loadBundled);
+    requestLoadBundled();
+    const unsubCases = subscribeCases(supabase, user.id, requestLoadBundled);
+    const unsubEvents = subscribeCaseEventsFirm(supabase, user.id, requestLoadBundled);
     const unsubContacts = subscribeContacts(supabase, user.id, setContacts);
     return () => {
       unsubCases();
       unsubEvents();
       unsubContacts();
     };
-  }, [user, loading, supabaseReady, loadBundled]);
+  }, [user, loading, supabaseReady, requestLoadBundled]);
 
   /** Refetch when returning to the tab (Realtime may be off or delayed). */
   useEffect(() => {
     if (!supabaseReady || loading || !user) return;
     const onVisible = () => {
-      if (document.visibilityState === "visible") loadBundled();
+      if (document.visibilityState === "visible") requestLoadBundled();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [supabaseReady, loading, user, loadBundled]);
+  }, [supabaseReady, loading, user, requestLoadBundled]);
 
   useEffect(() => {
     if (!loading && supabaseReady && !user) router.replace("/login");
@@ -688,6 +710,7 @@ export default function CasesListPage() {
                     <Link
                       key={c.id}
                       href={`/cases/${c.id}`}
+                      prefetch={false}
                       aria-label={isArchived ? `${c.name} — archived case` : undefined}
                       className={`flex flex-col gap-1.5 px-6 py-4 transition-colors sm:flex-row sm:items-center sm:justify-between ${
                         isArchived

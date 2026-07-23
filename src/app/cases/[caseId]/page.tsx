@@ -256,6 +256,7 @@ export default function CaseDetailPage() {
   const [editPreferredLanguage, setEditPreferredLanguage] = useState("");
   const [editDateOfBirth, setEditDateOfBirth] = useState("");
   const [editingDob, setEditingDob] = useState(false);
+  const [editNeedsTranslator, setEditNeedsTranslator] = useState(false);
 
   const [verifyBusy, setVerifyBusy] = useState(false);
   const [verifyResult, setVerifyResult] = useState<VerifyResponse | null>(null);
@@ -313,9 +314,10 @@ export default function CaseDetailPage() {
   useEffect(() => {
     if (c) {
       setEditPreferredLanguage(c.preferredLanguage ?? "");
+      setEditNeedsTranslator(Boolean(c.needsTranslator));
       if (!editingDob) setEditDateOfBirth(c.dateOfBirth ?? "");
     }
-  }, [c?.id, c?.preferredLanguage, c?.dateOfBirth, editingDob]);
+  }, [c?.id, c?.preferredLanguage, c?.needsTranslator, c?.dateOfBirth, editingDob]);
 
   useEffect(() => {
     if (!supabaseReady || !user || !c) {
@@ -1114,6 +1116,23 @@ export default function CaseDetailPage() {
     }
   }
 
+  async function saveNeedsTranslator(next: boolean) {
+    if (!caseId || !c || !user) return;
+    if (next === Boolean(c.needsTranslator)) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const supabase = getBrowserSupabase();
+      await updateCase(supabase, caseId, { needsTranslator: next });
+      flash(next ? "Marked as needs translator" : "Translator not needed");
+    } catch (e) {
+      setEditNeedsTranslator(Boolean(c.needsTranslator));
+      setMsg(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function saveDateOfBirth() {
     if (!caseId || !c || !user) return;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(editDateOfBirth)) {
@@ -1206,6 +1225,12 @@ export default function CaseDetailPage() {
                 <span>DOB {isoToDisplayDate(c.dateOfBirth)}</span>
               </>
             )}
+            {c.needsTranslator && (
+              <>
+                <span className="text-border-strong">·</span>
+                <span className="font-medium text-warning">Needs translator</span>
+              </>
+            )}
             {c.dateOfIncident && (
               <>
                 <span className="text-border-strong">·</span>
@@ -1295,6 +1320,21 @@ export default function CaseDetailPage() {
                 </option>
               ))}
             </Select>
+          </label>
+          <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-white px-2.5 py-1.5 text-xs font-medium text-text shadow-sm">
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5 rounded border-border text-primary focus:ring-primary/30"
+              checked={editNeedsTranslator}
+              disabled={busy}
+              onChange={(e) => {
+                const next = e.target.checked;
+                setEditNeedsTranslator(next);
+                void saveNeedsTranslator(next);
+              }}
+              aria-label="Needs translator"
+            />
+            <span className="text-text-muted">Translator</span>
           </label>
           {c.status === "archived" ? (
             <span

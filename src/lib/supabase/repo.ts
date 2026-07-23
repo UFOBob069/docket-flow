@@ -113,6 +113,7 @@ function caseFromRow(r: Record<string, unknown>): Case {
     notes: (r.notes as string) ?? null,
     caseType: (r.case_type as string) ?? null,
     preferredLanguage: (r.preferred_language as string) ?? null,
+    needsTranslator: Boolean(r.needs_translator),
     status: r.status as Case["status"],
     documentUrl: (r.document_url as string) ?? undefined,
     documentFileName: (r.document_file_name as string) ?? undefined,
@@ -313,13 +314,7 @@ export function subscribeCases(
   _userId: string,
   onChange: () => void
 ): Unsubscribe {
-  const notify = () => {
-    try {
-      onChange();
-    } catch (e) {
-      console.warn("[subscribeCases]", e);
-    }
-  };
+  const notify = debounceNotify(onChange, REALTIME_REFETCH_DEBOUNCE_MS);
   const lane =
     typeof crypto !== "undefined" && "randomUUID" in crypto
       ? crypto.randomUUID()
@@ -335,6 +330,7 @@ export function subscribeCases(
     )
     .subscribe();
   return () => {
+    notify.cancel();
     void supabase.removeChannel(ch);
   };
 }
@@ -344,12 +340,16 @@ export function subscribeCases(
  * Use with `fetchCasesWithEvents` so list UIs stay in sync — `subscribeCases` alone
  * only reacts to the `cases` table, so SOL milestones and other event writes were
  * invisible until a full navigation or case row update.
+ *
+ * Debounced: a busy firm can emit many events in a short window; each unthrottled
+ * callback was reloading every case + every event and timing out PostgREST.
  */
 export function subscribeCaseEventsFirm(
   supabase: SupabaseClient,
   _userId: string,
   onChange: () => void
 ): Unsubscribe {
+  const notify = debounceNotify(onChange, REALTIME_REFETCH_DEBOUNCE_MS);
   const lane =
     typeof crypto !== "undefined" && "randomUUID" in crypto
       ? crypto.randomUUID()
@@ -360,17 +360,18 @@ export function subscribeCaseEventsFirm(
       "postgres_changes",
       { event: "*", schema: "public", table: "case_events" },
       () => {
-        onChange();
+        notify();
       }
     )
     .subscribe();
   return () => {
+    notify.cancel();
     void supabase.removeChannel(ch);
   };
 }
 
-/** Max case IDs per `in(...)` query — avoids huge URLs and keeps PostgREST happy. */
-const CASE_IDS_IN_CHUNK = 150;
+/** Max case IDs per `in(...)` query — large lists blow PostgREST URL/plan time ("Thread killed by timeout"). */
+const CASE_IDS_IN_CHUNK = 40;
 
 /**
  * PostgREST/Supabase caps each response (often 1000 rows). Without paging, a firm-wide
@@ -378,6 +379,31 @@ const CASE_IDS_IN_CHUNK = 150;
  * (e.g. SOL milestones on active cases) never appear, so case lists show "0 events".
  */
 const POSTGREST_PAGE_SIZE = 1000;
+
+/** Coalesce realtime-driven full-list refetches. */
+const REALTIME_REFETCH_DEBOUNCE_MS = 1500;
+
+function debounceNotify(fn: () => void, waitMs: number): { (): void; cancel: () => void } {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const wrapped = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      try {
+        fn();
+      } catch (e) {
+        console.warn("[realtime refetch]", e);
+      }
+    }, waitMs);
+  };
+  wrapped.cancel = () => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+  };
+  return wrapped;
+}
 
 async function fetchAllCaseEventRowsForCaseIds(
   supabase: SupabaseClient,
@@ -441,17 +467,23 @@ export async function fetchCaseTrackerPipelineByCaseIds(
 
   for (let i = 0; i < caseIds.length; i += CASE_IDS_IN_CHUNK) {
     const chunk = caseIds.slice(i, i + CASE_IDS_IN_CHUNK);
+    // Sequential per chunk (not parallel across all chunks) to avoid stampeding PostgREST.
     const [entriesRes, resultsRes] = await Promise.all([
-      supabase.from("case_tracker_entries").select("case_id, case_stage").in("case_id", chunk),
-      supabase
-        .from("case_tracker_results")
-        .select("case_id, disbursed_status, check_disbursed_at")
-        .in("case_id", chunk),
+      fetchAllRowsForCaseIdIn(
+        supabase,
+        "case_tracker_entries",
+        "case_id, case_stage",
+        chunk
+      ),
+      fetchAllRowsForCaseIdIn(
+        supabase,
+        "case_tracker_results",
+        "case_id, disbursed_status, check_disbursed_at",
+        chunk
+      ),
     ]);
-    if (entriesRes.error) throw entriesRes.error;
-    if (resultsRes.error) throw resultsRes.error;
 
-    for (const row of entriesRes.data ?? []) {
+    for (const row of entriesRes) {
       const caseId = String((row as { case_id: string }).case_id);
       const existing = out.get(caseId) ?? {
         caseStage: null,
@@ -461,7 +493,7 @@ export async function fetchCaseTrackerPipelineByCaseIds(
       existing.caseStage = ((row as { case_stage: string | null }).case_stage ?? null) as string | null;
       out.set(caseId, existing);
     }
-    for (const row of resultsRes.data ?? []) {
+    for (const row of resultsRes) {
       const caseId = String((row as { case_id: string }).case_id);
       const existing = out.get(caseId) ?? {
         caseStage: null,
@@ -477,6 +509,30 @@ export async function fetchCaseTrackerPipelineByCaseIds(
   }
 
   return out;
+}
+
+async function fetchAllRowsForCaseIdIn(
+  supabase: SupabaseClient,
+  table: "case_tracker_entries" | "case_tracker_results",
+  columns: string,
+  caseIds: string[]
+): Promise<Record<string, unknown>[]> {
+  if (!caseIds.length) return [];
+  const acc: Record<string, unknown>[] = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from(table)
+      .select(columns)
+      .in("case_id", caseIds)
+      .range(from, from + POSTGREST_PAGE_SIZE - 1);
+    if (error) throw error;
+    const page = (data ?? []) as unknown as Record<string, unknown>[];
+    for (const r of page) acc.push(r);
+    if (page.length < POSTGREST_PAGE_SIZE) break;
+    from += POSTGREST_PAGE_SIZE;
+  }
+  return acc;
 }
 
 /** Create or update Case Tracker intake fields on `case_tracker_entries`. */
@@ -701,6 +757,7 @@ export async function createCase(
     notes: input.notes?.trim() || null,
     case_type: input.caseType?.trim() || null,
     preferred_language: input.preferredLanguage?.trim() || null,
+    needs_translator: Boolean(input.needsTranslator),
     status: "active" as const,
     document_url: input.documentUrl ?? null,
     document_file_name: input.documentFileName ?? null,
@@ -762,6 +819,7 @@ export async function updateCase(
   if (patch.notes !== undefined) row.notes = patch.notes;
   if (patch.caseType !== undefined) row.case_type = patch.caseType;
   if (patch.preferredLanguage !== undefined) row.preferred_language = patch.preferredLanguage;
+  if (patch.needsTranslator !== undefined) row.needs_translator = Boolean(patch.needsTranslator);
   if (patch.status !== undefined) row.status = patch.status;
   if (patch.documentUrl !== undefined) row.document_url = patch.documentUrl;
   if (patch.documentFileName !== undefined) row.document_file_name = patch.documentFileName;
@@ -1033,6 +1091,24 @@ export function subscribeActivity(
 }
 
 /* ── Bulk ─────────────────────────────────────────────────────────── */
+
+/** Firm-wide: set `completed` on events by id (chunked for PostgREST). */
+export async function markEventsCompleted(
+  supabase: SupabaseClient,
+  eventIds: string[]
+): Promise<void> {
+  if (!eventIds.length) return;
+  const now = Date.now();
+  for (let i = 0; i < eventIds.length; i += CASE_IDS_IN_CHUNK) {
+    const chunk = eventIds.slice(i, i + CASE_IDS_IN_CHUNK);
+    const { error } = await supabase
+      .from("case_events")
+      .update({ completed: true, updated_at: now })
+      .in("id", chunk)
+      .eq("completed", false);
+    if (error) throw new Error(formatSupabaseWriteError("case_events mark completed", error));
+  }
+}
 
 export async function bulkDeleteEvents(
   supabase: SupabaseClient,

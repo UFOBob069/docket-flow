@@ -16,6 +16,7 @@ import {
   subscribeCaseEventsFirm,
   subscribeContacts,
 } from "@/lib/supabase/repo";
+import { autoCompleteStaleEvents } from "@/lib/auto-complete-stale-events";
 import { ACTIVITY_ACTION_LABELS } from "@/lib/activity-labels";
 import { caseMatchesAssignedRole } from "@/lib/case-assigned-filter";
 import { EVENT_KIND_FILTER_OPTIONS } from "@/lib/one-off-events";
@@ -119,7 +120,7 @@ function DeadlineSection({
                 key={`${c.id}-${e.id}`}
                 className="flex items-center gap-2 rounded-lg px-3 py-2.5 transition-colors hover:bg-surface-alt"
               >
-                <Link href={`/cases/${c.id}`} className="group min-w-0 flex-1">
+                <Link href={`/cases/${c.id}`} prefetch={false} className="group min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-text group-hover:text-primary">
@@ -185,7 +186,7 @@ function ActivityFeed({ entries }: { entries: ActivityEntry[] }) {
                     <>
                       {" "}
                       {a.caseId ? (
-                        <Link href={`/cases/${a.caseId}`} className="font-medium text-primary hover:underline">{a.caseName}</Link>
+                        <Link href={`/cases/${a.caseId}`} prefetch={false} className="font-medium text-primary hover:underline">{a.caseName}</Link>
                       ) : (
                         <span className="font-medium">{a.caseName}</span>
                       )}
@@ -247,6 +248,16 @@ export default function DashboardPage() {
     try {
       const supabase = getBrowserSupabase();
       const bundled = await fetchCasesWithEvents(supabase, user.id);
+      const t = todayIso();
+      try {
+        await autoCompleteStaleEvents(
+          supabase,
+          bundled.flatMap((b) => b.events),
+          t
+        );
+      } catch (e) {
+        console.warn("[dashboard] autoCompleteStaleEvents", e);
+      }
       let pipelineByCaseId = new Map<string, CaseTrackerPipeline>();
       try {
         pipelineByCaseId = await fetchCaseTrackerPipelineByCaseIds(
@@ -258,7 +269,6 @@ export default function DashboardPage() {
       }
       const flat: Row[] = [];
       const activeList: Case[] = [];
-      const t = todayIso();
       let activeCases = 0;
       let totalDeadlines = 0;
       for (const { case: c, events } of bundled) {
