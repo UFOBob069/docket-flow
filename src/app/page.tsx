@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { addDays, differenceInCalendarDays, parseISO, format, formatDistanceToNow } from "date-fns";
@@ -240,6 +240,9 @@ export default function DashboardPage() {
   const [timelineEnd, setTimelineEnd] = useState(() => defaultDashboardEnd(todayIso()));
   const [completingEventId, setCompletingEventId] = useState<string | null>(null);
   const [rowActionError, setRowActionError] = useState<string | null>(null);
+  const loadInFlightRef = useRef(false);
+  const loadQueuedRef = useRef(false);
+  const autoCompleteDayRef = useRef<string | null>(null);
 
   const loadDashboard = useCallback(async () => {
     if (!user || !supabaseReady) return;
@@ -249,14 +252,18 @@ export default function DashboardPage() {
       const supabase = getBrowserSupabase();
       const bundled = await fetchCasesWithEvents(supabase, user.id);
       const t = todayIso();
-      try {
-        await autoCompleteStaleEvents(
-          supabase,
-          bundled.flatMap((b) => b.events),
-          t
-        );
-      } catch (e) {
-        console.warn("[dashboard] autoCompleteStaleEvents", e);
+      // Once per calendar day per tab — bulk completes fire realtime and would refetch again.
+      if (autoCompleteDayRef.current !== t) {
+        try {
+          await autoCompleteStaleEvents(
+            supabase,
+            bundled.flatMap((b) => b.events),
+            t
+          );
+          autoCompleteDayRef.current = t;
+        } catch (e) {
+          console.warn("[dashboard] autoCompleteStaleEvents", e);
+        }
       }
       let pipelineByCaseId = new Map<string, CaseTrackerPipeline>();
       try {
@@ -294,14 +301,36 @@ export default function DashboardPage() {
     }
   }, [user, supabaseReady]);
 
+  const loadDashboardRef = useRef(loadDashboard);
+  loadDashboardRef.current = loadDashboard;
+
+  const requestLoadDashboard = useCallback(() => {
+    if (loadInFlightRef.current) {
+      loadQueuedRef.current = true;
+      return;
+    }
+    loadInFlightRef.current = true;
+    void (async () => {
+      try {
+        await loadDashboardRef.current();
+      } finally {
+        loadInFlightRef.current = false;
+        if (loadQueuedRef.current) {
+          loadQueuedRef.current = false;
+          requestLoadDashboard();
+        }
+      }
+    })();
+  }, []);
+
   useEffect(() => {
     if (!supabaseReady || loading) return;
     if (!user) {
       router.replace("/login");
       return;
     }
-    void loadDashboard();
-  }, [user, loading, supabaseReady, router, loadDashboard]);
+    requestLoadDashboard();
+  }, [user, loading, supabaseReady, router, requestLoadDashboard]);
 
   useEffect(() => {
     if (!supabaseReady || loading || !user) return;
@@ -313,18 +342,18 @@ export default function DashboardPage() {
     if (!supabaseReady || loading || !user) return;
     const supabase = getBrowserSupabase();
     return subscribeCaseEventsFirm(supabase, user.id, () => {
-      void loadDashboard();
+      requestLoadDashboard();
     });
-  }, [user, loading, supabaseReady, loadDashboard]);
+  }, [user, loading, supabaseReady, requestLoadDashboard]);
 
   useEffect(() => {
     if (!supabaseReady || loading || !user) return;
     const onVisible = () => {
-      if (document.visibilityState === "visible") void loadDashboard();
+      if (document.visibilityState === "visible") requestLoadDashboard();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [supabaseReady, loading, user, loadDashboard]);
+  }, [supabaseReady, loading, user, requestLoadDashboard]);
 
   useEffect(() => {
     if (!supabaseReady || loading || !user) return;
@@ -805,7 +834,7 @@ export default function DashboardPage() {
           contacts={contacts}
           idToken={idToken}
           user={{ id: user.id, email: user.email }}
-          onSaved={() => void loadDashboard()}
+          onSaved={() => requestLoadDashboard()}
         />
       )}
     </PageWrapper>

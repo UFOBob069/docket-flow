@@ -300,12 +300,11 @@ export async function fetchCasesForUser(
   supabase: SupabaseClient,
   _userId: string
 ): Promise<Case[]> {
-  const { data, error } = await supabase
-    .from("cases")
-    .select("*")
-    .order("updated_at", { ascending: false });
-  if (error) throw error;
-  return (data ?? []).map((r) => caseFromRow(r as Record<string, unknown>));
+  const rows = await fetchAllPagedRows(supabase, "cases", "*", {
+    column: "updated_at",
+    ascending: false,
+  });
+  return rows.map((r) => caseFromRow(r));
 }
 
 /** `cases` table changes — caller refetches bundled data (e.g. `fetchCasesWithEvents`). */
@@ -381,7 +380,41 @@ const CASE_IDS_IN_CHUNK = 40;
 const POSTGREST_PAGE_SIZE = 1000;
 
 /** Coalesce realtime-driven full-list refetches. */
-const REALTIME_REFETCH_DEBOUNCE_MS = 1500;
+const REALTIME_REFETCH_DEBOUNCE_MS = 2500;
+
+/**
+ * Columns needed for firm list/dashboard (omit bulky Google invite maps / reminder payloads).
+ * Case detail still loads full rows via `fetchEventsForCase`.
+ */
+const FIRM_EVENT_LIST_COLUMNS = [
+  "id",
+  "case_id",
+  "user_id",
+  "title",
+  "date",
+  "schedule_kind",
+  "description",
+  "category",
+  "event_kind",
+  "start_date_time",
+  "end_date_time",
+  "deadline_end_date",
+  "deponent_or_subject",
+  "priority",
+  "calendar_origin",
+  "google_event_id",
+  "included",
+  "completed",
+  "group_suggested",
+  "group_id",
+  "merge_with_same_group",
+  "noise_flag",
+  "noise_reason",
+  "created_by_email",
+  "google_color_id",
+  "created_at",
+  "updated_at",
+].join(",");
 
 function debounceNotify(fn: () => void, waitMs: number): { (): void; cancel: () => void } {
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -405,28 +438,37 @@ function debounceNotify(fn: () => void, waitMs: number): { (): void; cancel: () 
   return wrapped;
 }
 
-async function fetchAllCaseEventRowsForCaseIds(
+async function fetchAllPagedRows(
   supabase: SupabaseClient,
-  caseIds: string[]
+  table: "cases" | "case_events" | "case_tracker_entries" | "case_tracker_results",
+  columns: string,
+  orderBy?: { column: string; ascending?: boolean }
 ): Promise<Record<string, unknown>[]> {
-  if (!caseIds.length) return [];
   const acc: Record<string, unknown>[] = [];
   let from = 0;
   for (;;) {
-    const { data, error } = await supabase
-      .from("case_events")
-      .select("*")
-      .in("case_id", caseIds)
-      .order("date", { ascending: true })
-      .order("id", { ascending: true })
-      .range(from, from + POSTGREST_PAGE_SIZE - 1);
+    let q = supabase.from(table).select(columns).range(from, from + POSTGREST_PAGE_SIZE - 1);
+    if (orderBy) {
+      q = q.order(orderBy.column, { ascending: orderBy.ascending ?? true });
+    }
+    const { data, error } = await q;
     if (error) throw error;
-    const page = (data ?? []) as Record<string, unknown>[];
+    const page = (data ?? []) as unknown as Record<string, unknown>[];
     for (const r of page) acc.push(r);
     if (page.length < POSTGREST_PAGE_SIZE) break;
     from += POSTGREST_PAGE_SIZE;
   }
   return acc;
+}
+
+/** Firm-wide events: ~4 pages of 1000 beats 14+ sequential `in(case_id)` chunk queries. */
+async function fetchAllFirmCaseEventRows(
+  supabase: SupabaseClient
+): Promise<Record<string, unknown>[]> {
+  return fetchAllPagedRows(supabase, "case_events", FIRM_EVENT_LIST_COLUMNS, {
+    column: "id",
+    ascending: true,
+  });
 }
 
 export async function fetchCasesWithEvents(
@@ -439,15 +481,11 @@ export async function fetchCasesWithEvents(
   const eventsByCaseId = new Map<string, CalendarEvent[]>();
   for (const c of cases) eventsByCaseId.set(c.id, []);
 
-  const caseIds = cases.map((c) => c.id);
-  for (let i = 0; i < caseIds.length; i += CASE_IDS_IN_CHUNK) {
-    const chunk = caseIds.slice(i, i + CASE_IDS_IN_CHUNK);
-    const rows = await fetchAllCaseEventRowsForCaseIds(supabase, chunk);
-    for (const r of rows) {
-      const ev = eventFromRow(r);
-      const list = eventsByCaseId.get(ev.caseId);
-      if (list) list.push(ev);
-    }
+  const rows = await fetchAllFirmCaseEventRows(supabase);
+  for (const r of rows) {
+    const ev = eventFromRow(r);
+    const list = eventsByCaseId.get(ev.caseId);
+    if (list) list.push(ev);
   }
 
   for (const list of eventsByCaseId.values()) {
@@ -457,7 +495,10 @@ export async function fetchCasesWithEvents(
   return cases.map((c) => ({ case: c, events: eventsByCaseId.get(c.id) ?? [] }));
 }
 
-/** Tracker stage + disbursement for pipeline active/closed filters (Case Tracker tables). */
+/**
+ * Tracker stage + disbursement for pipeline active/closed filters (Case Tracker tables).
+ * Loads firm-wide in 1–2 paged queries (no giant `in(case_id)` URL) then filters to `caseIds`.
+ */
 export async function fetchCaseTrackerPipelineByCaseIds(
   supabase: SupabaseClient,
   caseIds: string[]
@@ -465,50 +506,66 @@ export async function fetchCaseTrackerPipelineByCaseIds(
   const out = new Map<string, CaseTrackerPipeline>();
   if (!caseIds.length) return out;
 
-  for (let i = 0; i < caseIds.length; i += CASE_IDS_IN_CHUNK) {
-    const chunk = caseIds.slice(i, i + CASE_IDS_IN_CHUNK);
-    // Sequential per chunk (not parallel across all chunks) to avoid stampeding PostgREST.
+  const wanted = new Set(caseIds);
+  // Small ID sets (e.g. one case) keep the targeted path; firm lists use full-table pages.
+  if (caseIds.length <= CASE_IDS_IN_CHUNK) {
     const [entriesRes, resultsRes] = await Promise.all([
-      fetchAllRowsForCaseIdIn(
-        supabase,
-        "case_tracker_entries",
-        "case_id, case_stage",
-        chunk
-      ),
+      fetchAllRowsForCaseIdIn(supabase, "case_tracker_entries", "case_id, case_stage", caseIds),
       fetchAllRowsForCaseIdIn(
         supabase,
         "case_tracker_results",
         "case_id, disbursed_status, check_disbursed_at",
-        chunk
+        caseIds
       ),
     ]);
-
-    for (const row of entriesRes) {
-      const caseId = String((row as { case_id: string }).case_id);
-      const existing = out.get(caseId) ?? {
-        caseStage: null,
-        disbursedStatus: null,
-        checkDisbursedAt: null,
-      };
-      existing.caseStage = ((row as { case_stage: string | null }).case_stage ?? null) as string | null;
-      out.set(caseId, existing);
-    }
-    for (const row of resultsRes) {
-      const caseId = String((row as { case_id: string }).case_id);
-      const existing = out.get(caseId) ?? {
-        caseStage: null,
-        disbursedStatus: null,
-        checkDisbursedAt: null,
-      };
-      existing.disbursedStatus =
-        ((row as { disbursed_status: string | null }).disbursed_status ?? null) as string | null;
-      existing.checkDisbursedAt =
-        ((row as { check_disbursed_at: string | null }).check_disbursed_at ?? null) as string | null;
-      out.set(caseId, existing);
-    }
+    mergePipelineRows(out, entriesRes, resultsRes);
+    return out;
   }
 
+  const [entriesRes, resultsRes] = await Promise.all([
+    fetchAllPagedRows(supabase, "case_tracker_entries", "case_id, case_stage"),
+    fetchAllPagedRows(
+      supabase,
+      "case_tracker_results",
+      "case_id, disbursed_status, check_disbursed_at"
+    ),
+  ]);
+  mergePipelineRows(
+    out,
+    entriesRes.filter((r) => wanted.has(String((r as { case_id: string }).case_id))),
+    resultsRes.filter((r) => wanted.has(String((r as { case_id: string }).case_id)))
+  );
   return out;
+}
+
+function mergePipelineRows(
+  out: Map<string, CaseTrackerPipeline>,
+  entriesRes: Record<string, unknown>[],
+  resultsRes: Record<string, unknown>[]
+): void {
+  for (const row of entriesRes) {
+    const caseId = String((row as { case_id: string }).case_id);
+    const existing = out.get(caseId) ?? {
+      caseStage: null,
+      disbursedStatus: null,
+      checkDisbursedAt: null,
+    };
+    existing.caseStage = ((row as { case_stage: string | null }).case_stage ?? null) as string | null;
+    out.set(caseId, existing);
+  }
+  for (const row of resultsRes) {
+    const caseId = String((row as { case_id: string }).case_id);
+    const existing = out.get(caseId) ?? {
+      caseStage: null,
+      disbursedStatus: null,
+      checkDisbursedAt: null,
+    };
+    existing.disbursedStatus =
+      ((row as { disbursed_status: string | null }).disbursed_status ?? null) as string | null;
+    existing.checkDisbursedAt =
+      ((row as { check_disbursed_at: string | null }).check_disbursed_at ?? null) as string | null;
+    out.set(caseId, existing);
+  }
 }
 
 async function fetchAllRowsForCaseIdIn(

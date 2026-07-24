@@ -8,7 +8,7 @@ import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
 import {
-  fetchCasesWithEvents,
+  fetchCasesForUser,
   fetchEventsInDateRange,
   subscribeContacts,
   type EventWithCaseRow,
@@ -156,12 +156,10 @@ export default function CalendarPage() {
     (async () => {
       try {
         const supabase = getBrowserSupabase();
-        const bundled = await fetchCasesWithEvents(supabase, user.id);
-        const activeList: Case[] = [];
-        for (const { case: c } of bundled) {
-          if (c.status === "active") activeList.push(c);
-        }
-        activeList.sort((a, b) => a.name.localeCompare(b.name));
+        const cases = await fetchCasesForUser(supabase, user.id);
+        const activeList = cases
+          .filter((c) => c.status === "active")
+          .sort((a, b) => a.name.localeCompare(b.name));
         if (!cancelled) setActiveCasesForPicker(activeList);
       } catch {
         if (!cancelled) setActiveCasesForPicker([]);
