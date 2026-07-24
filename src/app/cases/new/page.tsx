@@ -58,7 +58,7 @@ export default function NewCasePage() {
   const [notes, setNotes] = useState("");
   const [caseType, setCaseType] = useState("");
   const [preferredLanguage, setPreferredLanguage] = useState("");
-  const [needsTranslator, setNeedsTranslator] = useState(false);
+  const [secondaryLanguage, setSecondaryLanguage] = useState("");
   const [injuries, setInjuries] = useState("");
   const [caseDescription, setCaseDescription] = useState("");
   const [solDate, setSolDate] = useState("");
@@ -193,7 +193,11 @@ export default function NewCasePage() {
       return;
     }
     if (!isPreferredLanguage(preferredLanguage)) {
-      setErr("Select a preferred language.");
+      setErr("Select a primary language.");
+      return;
+    }
+    if (secondaryLanguage && !isPreferredLanguage(secondaryLanguage)) {
+      setErr("Secondary language must be English or Spanish.");
       return;
     }
     const injuriesText = injuries.trim();
@@ -234,7 +238,7 @@ export default function NewCasePage() {
         notes: notes.trim() || null,
         caseType,
         preferredLanguage,
-        needsTranslator,
+        secondaryLanguage: secondaryLanguage || null,
         responsibleAttorneyContactId: attorneyId,
         eventAttorneyContactId: eventAttorneyId || null,
         assignedContactIds,
@@ -482,16 +486,11 @@ export default function NewCasePage() {
               </div>
             )}
             <div>
-              <Label required>Preferred language</Label>
+              <Label required>Primary language</Label>
               <Select
                 className="mt-1.5"
                 value={preferredLanguage}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  setPreferredLanguage(next);
-                  if (next === "English") setNeedsTranslator(false);
-                  else if (next === "Spanish") setNeedsTranslator(true);
-                }}
+                onChange={(e) => setPreferredLanguage(e.target.value)}
                 required
               >
                 <option value="">Select language…</option>
@@ -502,28 +501,22 @@ export default function NewCasePage() {
                 ))}
               </Select>
             </div>
-            <label
-              className={`flex items-start gap-3 rounded-lg border px-3 py-3 text-sm ${
-                needsTranslator
-                  ? "border-warning/40 bg-warning-light text-warning"
-                  : "border-border bg-white text-text"
-              }`}
-            >
-              <input
-                type="checkbox"
-                className="mt-0.5 h-4 w-4 rounded border-border text-primary focus:ring-primary/30"
-                checked={needsTranslator}
-                onChange={(e) => setNeedsTranslator(e.target.checked)}
-              />
-              <span>
-                <span className={`font-semibold ${needsTranslator ? "uppercase tracking-wide" : ""}`}>
-                  Translator Required
-                </span>
-                <span className={`mt-0.5 block text-xs ${needsTranslator ? "text-warning/80" : "text-text-muted"}`}>
-                  Defaults off for English, on for Spanish — change if needed.
-                </span>
-              </span>
-            </label>
+            <div>
+              <Label>Secondary language</Label>
+              <Select
+                className="mt-1.5"
+                value={secondaryLanguage}
+                onChange={(e) => setSecondaryLanguage(e.target.value)}
+              >
+                <option value="">None</option>
+                {PREFERRED_LANGUAGE_OPTIONS.map((lang) => (
+                  <option key={lang} value={lang}>
+                    {lang}
+                  </option>
+                ))}
+              </Select>
+              <p className="mt-1 text-xs text-text-muted">Optional — if the client also speaks English or Spanish.</p>
+            </div>
             <div>
               <Label required>Date of birth</Label>
               <DateInput

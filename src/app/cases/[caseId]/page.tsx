@@ -254,9 +254,9 @@ export default function CaseDetailPage() {
   const [reassignParalegalId, setReassignParalegalId] = useState("");
   const [reassignExtraIds, setReassignExtraIds] = useState<string[]>([]);
   const [editPreferredLanguage, setEditPreferredLanguage] = useState("");
+  const [editSecondaryLanguage, setEditSecondaryLanguage] = useState("");
   const [editDateOfBirth, setEditDateOfBirth] = useState("");
   const [editingDob, setEditingDob] = useState(false);
-  const [editNeedsTranslator, setEditNeedsTranslator] = useState(false);
 
   const [verifyBusy, setVerifyBusy] = useState(false);
   const [verifyResult, setVerifyResult] = useState<VerifyResponse | null>(null);
@@ -314,10 +314,10 @@ export default function CaseDetailPage() {
   useEffect(() => {
     if (c) {
       setEditPreferredLanguage(c.preferredLanguage ?? "");
-      setEditNeedsTranslator(Boolean(c.needsTranslator));
+      setEditSecondaryLanguage(c.secondaryLanguage ?? "");
       if (!editingDob) setEditDateOfBirth(c.dateOfBirth ?? "");
     }
-  }, [c?.id, c?.preferredLanguage, c?.needsTranslator, c?.dateOfBirth, editingDob]);
+  }, [c?.id, c?.preferredLanguage, c?.secondaryLanguage, c?.dateOfBirth, editingDob]);
 
   useEffect(() => {
     if (!supabaseReady || !user || !c) {
@@ -1098,7 +1098,7 @@ export default function CaseDetailPage() {
   async function savePreferredLanguage(next: string) {
     if (!caseId || !c || !user) return;
     if (!isPreferredLanguage(next)) {
-      setMsg("Select a preferred language.");
+      setMsg("Select a primary language.");
       return;
     }
     if (next === (c.preferredLanguage ?? "")) return;
@@ -1107,7 +1107,7 @@ export default function CaseDetailPage() {
     try {
       const supabase = getBrowserSupabase();
       await updateCase(supabase, caseId, { preferredLanguage: next });
-      flash("Preferred language saved");
+      flash("Primary language saved");
     } catch (e) {
       setEditPreferredLanguage(c.preferredLanguage ?? "");
       setMsg(e instanceof Error ? e.message : "Save failed");
@@ -1116,17 +1116,21 @@ export default function CaseDetailPage() {
     }
   }
 
-  async function saveNeedsTranslator(next: boolean) {
+  async function saveSecondaryLanguage(next: string) {
     if (!caseId || !c || !user) return;
-    if (next === Boolean(c.needsTranslator)) return;
+    if (next && !isPreferredLanguage(next)) {
+      setMsg("Secondary language must be English or Spanish.");
+      return;
+    }
+    if (next === (c.secondaryLanguage ?? "")) return;
     setBusy(true);
     setMsg(null);
     try {
       const supabase = getBrowserSupabase();
-      await updateCase(supabase, caseId, { needsTranslator: next });
-      flash(next ? "Marked Translator Required" : "Translator Required cleared");
+      await updateCase(supabase, caseId, { secondaryLanguage: next || null });
+      flash(next ? "Secondary language saved" : "Secondary language cleared");
     } catch (e) {
-      setEditNeedsTranslator(Boolean(c.needsTranslator));
+      setEditSecondaryLanguage(c.secondaryLanguage ?? "");
       setMsg(e instanceof Error ? e.message : "Save failed");
     } finally {
       setBusy(false);
@@ -1225,10 +1229,20 @@ export default function CaseDetailPage() {
                 <span>DOB {isoToDisplayDate(c.dateOfBirth)}</span>
               </>
             )}
-            {c.needsTranslator && (
-              <Badge variant="warning" className="text-xs font-bold uppercase tracking-wide">
-                Translator Required
-              </Badge>
+            {c.preferredLanguage && (
+              <>
+                <span className="text-border-strong">·</span>
+                <span>
+                  {c.preferredLanguage}
+                  {c.secondaryLanguage ? ` · ${c.secondaryLanguage}` : ""}
+                </span>
+              </>
+            )}
+            {!c.preferredLanguage && c.secondaryLanguage && (
+              <>
+                <span className="text-border-strong">·</span>
+                <span>{c.secondaryLanguage}</span>
+              </>
             )}
             {c.dateOfIncident && (
               <>
@@ -1300,7 +1314,7 @@ export default function CaseDetailPage() {
             </div>
           )}
           <label className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-2.5 py-1.5 text-xs font-medium text-text shadow-sm">
-            <span className="text-text-muted">Language</span>
+            <span className="text-text-muted">Primary</span>
             <Select
               className="w-auto min-w-[5.75rem] border-0 bg-transparent py-0 pl-0 pr-6 text-xs focus:ring-0"
               disabled={busy}
@@ -1310,7 +1324,7 @@ export default function CaseDetailPage() {
                 setEditPreferredLanguage(next);
                 if (isPreferredLanguage(next)) void savePreferredLanguage(next);
               }}
-              aria-label="Preferred language"
+              aria-label="Primary language"
             >
               <option value="">Select…</option>
               {PREFERRED_LANGUAGE_OPTIONS.map((lang) => (
@@ -1320,28 +1334,26 @@ export default function CaseDetailPage() {
               ))}
             </Select>
           </label>
-          <label
-            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium shadow-sm ${
-              editNeedsTranslator
-                ? "border-warning/40 bg-warning-light text-warning"
-                : "border-border bg-white text-text"
-            }`}
-          >
-            <input
-              type="checkbox"
-              className="h-3.5 w-3.5 rounded border-border text-primary focus:ring-primary/30"
-              checked={editNeedsTranslator}
+          <label className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-2.5 py-1.5 text-xs font-medium text-text shadow-sm">
+            <span className="text-text-muted">Secondary</span>
+            <Select
+              className="w-auto min-w-[5.75rem] border-0 bg-transparent py-0 pl-0 pr-6 text-xs focus:ring-0"
               disabled={busy}
+              value={editSecondaryLanguage}
               onChange={(e) => {
-                const next = e.target.checked;
-                setEditNeedsTranslator(next);
-                void saveNeedsTranslator(next);
+                const next = e.target.value;
+                setEditSecondaryLanguage(next);
+                void saveSecondaryLanguage(next);
               }}
-              aria-label="Translator Required"
-            />
-            <span className={editNeedsTranslator ? "font-bold uppercase tracking-wide" : "text-text-muted"}>
-              Translator Required
-            </span>
+              aria-label="Secondary language"
+            >
+              <option value="">None</option>
+              {PREFERRED_LANGUAGE_OPTIONS.map((lang) => (
+                <option key={lang} value={lang}>
+                  {lang}
+                </option>
+              ))}
+            </Select>
           </label>
           {c.status === "archived" ? (
             <span

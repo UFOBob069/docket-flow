@@ -130,10 +130,10 @@ export interface Case {
   dateOfBirth?: string | null;
   notes?: string | null;
   caseType?: string | null;
-  /** English or Spanish */
+  /** Primary language — English or Spanish */
   preferredLanguage?: string | null;
-  /** Client needs a translator for communications */
-  needsTranslator?: boolean;
+  /** Optional secondary language — English or Spanish */
+  secondaryLanguage?: string | null;
   status: CaseStatus;
   documentUrl?: string;
   documentFileName?: string;

@@ -113,7 +113,7 @@ function caseFromRow(r: Record<string, unknown>): Case {
     notes: (r.notes as string) ?? null,
     caseType: (r.case_type as string) ?? null,
     preferredLanguage: (r.preferred_language as string) ?? null,
-    needsTranslator: Boolean(r.needs_translator),
+    secondaryLanguage: (r.secondary_language as string) ?? null,
     status: r.status as Case["status"],
     documentUrl: (r.document_url as string) ?? undefined,
     documentFileName: (r.document_file_name as string) ?? undefined,
@@ -757,7 +757,7 @@ export async function createCase(
     notes: input.notes?.trim() || null,
     case_type: input.caseType?.trim() || null,
     preferred_language: input.preferredLanguage?.trim() || null,
-    needs_translator: Boolean(input.needsTranslator),
+    secondary_language: input.secondaryLanguage?.trim() || null,
     status: "active" as const,
     document_url: input.documentUrl ?? null,
     document_file_name: input.documentFileName ?? null,
@@ -819,7 +819,9 @@ export async function updateCase(
   if (patch.notes !== undefined) row.notes = patch.notes;
   if (patch.caseType !== undefined) row.case_type = patch.caseType;
   if (patch.preferredLanguage !== undefined) row.preferred_language = patch.preferredLanguage;
-  if (patch.needsTranslator !== undefined) row.needs_translator = Boolean(patch.needsTranslator);
+  if (patch.secondaryLanguage !== undefined) {
+    row.secondary_language = patch.secondaryLanguage?.trim() || null;
+  }
   if (patch.status !== undefined) row.status = patch.status;
   if (patch.documentUrl !== undefined) row.document_url = patch.documentUrl;
   if (patch.documentFileName !== undefined) row.document_file_name = patch.documentFileName;
