@@ -309,11 +309,35 @@ async function deleteCalendarEventOnCalendar(
 ): Promise<void> {
   const auth = getAuthForUser(userEmail);
   const calendar = google.calendar({ version: "v3", auth });
-  await calendar.events.delete({
-    calendarId,
-    eventId,
-    ...(sendUpdates ? { sendUpdates } : {}),
-  });
+  try {
+    await calendar.events.delete({
+      calendarId,
+      eventId,
+      ...(sendUpdates ? { sendUpdates } : {}),
+    });
+  } catch (err) {
+    // Already deleted / never existed — treat as success so reconcile stays idempotent.
+    if (isGoogleNotFoundError(err)) {
+      console.warn("[calendar] Delete 404 (already gone)", userEmail, eventId);
+      return;
+    }
+    throw err;
+  }
+}
+
+function isGoogleNotFoundError(err: unknown): boolean {
+  const e = err as {
+    code?: number | string;
+    status?: number;
+    response?: { status?: number };
+    errors?: { reason?: string }[];
+    message?: string;
+  };
+  const status = Number(e?.code ?? e?.status ?? e?.response?.status ?? 0);
+  if (status === 404) return true;
+  if (e?.errors?.some((x) => x.reason === "notFound")) return true;
+  const msg = String(e?.message ?? err ?? "").toLowerCase();
+  return msg.includes("404") && (msg.includes("not found") || msg.includes("notfound"));
 }
 
 function buildPatchBody(params: {

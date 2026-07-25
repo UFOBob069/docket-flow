@@ -40,7 +40,7 @@ export async function POST(req: Request, context: RouteContext): Promise<Respons
     const result = await reconcileCaseCalendarInvitesAfterReassign(supabase, caseId, {
       source,
     });
-    return NextResponse.json({ ok: true, ...result });
+    return NextResponse.json(result);
   } catch (e) {
     const status = (e as Error & { status?: number }).status;
     if (status === 404 || (e instanceof Error && e.message === "Case not found")) {
