@@ -1,10 +1,19 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { buildIntakeRowUpdateFromPatch } from "@/lib/intake-update";
+import {
+  buildIntakePlainColumnUpdate,
+  intakeFromIntakesRow,
+  INTAKE_EDITABLE_COLUMNS,
+} from "@/lib/intake-update";
 import type { IntakeFlat, IntakeInteraction, IntakeListItem } from "@/lib/intake-types";
 
-function intakeFromFlatRow(r: Record<string, unknown>): IntakeFlat {
-  return r as unknown as IntakeFlat;
-}
+const INTAKE_SELECT = [
+  "id",
+  "call_id",
+  "created_at",
+  "case_id",
+  "data",
+  ...INTAKE_EDITABLE_COLUMNS,
+].join(",");
 
 export async function fetchIntakesList(
   supabase: SupabaseClient,
@@ -14,7 +23,7 @@ export async function fetchIntakesList(
   const offset = opts.offset ?? 0;
   let q = supabase
     .from("intakes")
-    .select("id, call_id, name, phone, accident_date, created_at, case_id, data")
+    .select("id, call_id, name, phone, accident_date, created_at, case_id, how_found, notes, data")
     .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
 
@@ -31,19 +40,17 @@ export async function fetchIntakesList(
   if (error) throw error;
 
   return (data ?? []).map((row) => {
-    const r = row as Record<string, unknown>;
-    const dataJson = (r.data as Record<string, unknown> | null) ?? {};
-    const referral = (dataJson.referral as Record<string, unknown> | null) ?? {};
+    const flat = intakeFromIntakesRow(row as Record<string, unknown>);
     return {
-      id: r.id as string,
-      call_id: (r.call_id as string) ?? null,
-      name: (r.name as string) ?? null,
-      phone: (r.phone as string) ?? null,
-      accident_date: (r.accident_date as string) ?? null,
-      created_at: (r.created_at as string) ?? null,
-      case_id: (r.case_id as string) ?? null,
-      how_found: (referral.how_found as string) ?? null,
-      notes: (dataJson.notes as string) ?? null,
+      id: flat.id,
+      call_id: flat.call_id,
+      name: flat.name,
+      phone: flat.phone,
+      accident_date: flat.accident_date,
+      created_at: flat.created_at,
+      case_id: flat.case_id ?? null,
+      how_found: flat.how_found,
+      notes: flat.notes,
     };
   });
 }
@@ -53,29 +60,22 @@ export async function fetchIntakeByCallId(
   callId: string
 ): Promise<IntakeFlat | null> {
   const { data, error } = await supabase
-    .from("intakes_flat")
-    .select("*")
+    .from("intakes")
+    .select(INTAKE_SELECT)
     .eq("call_id", callId)
     .maybeSingle();
   if (error) throw error;
   if (!data) return null;
-
-  const { data: base, error: baseErr } = await supabase
-    .from("intakes")
-    .select("case_id")
-    .eq("call_id", callId)
-    .maybeSingle();
-  if (baseErr) throw baseErr;
-
-  return {
-    ...intakeFromFlatRow(data as Record<string, unknown>),
-    case_id: (base?.case_id as string) ?? null,
-  };
+  return intakeFromIntakesRow(data as unknown as Record<string, unknown>);
 }
 
-function isMissingRelationError(error: { code?: string; message?: string; details?: string; hint?: string }): boolean {
+function isMissingRelationError(error: {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+}): boolean {
   const code = error.code ?? "";
-  // Postgres undefined_table, or PostgREST schema cache miss (HTTP 404 → PGRST205 / similar).
   if (code === "42P01" || code === "PGRST205" || code === "PGRST116") return true;
   const hay = `${error.message ?? ""} ${error.details ?? ""} ${error.hint ?? ""}`.toLowerCase();
   return (
@@ -97,7 +97,6 @@ export async function fetchIntakeInteractions(
     .eq("intake_call_id", callId)
     .order("created_at", { ascending: true });
   if (error) {
-    // Table is owned by the intake router and may not exist yet — detail page should still load.
     if (isMissingRelationError(error)) return [];
     console.warn("[intake_interactions]", error.code, error.message);
     return [];
@@ -110,28 +109,22 @@ export async function patchIntakeByCallId(
   callId: string,
   patch: Partial<IntakeFlat>
 ): Promise<IntakeFlat> {
-  const { data: existing, error: loadErr } = await supabase
+  const row = buildIntakePlainColumnUpdate(patch);
+  if (!Object.keys(row).length) {
+    const existing = await fetchIntakeByCallId(supabase, callId);
+    if (!existing) throw new Error("Intake not found");
+    return existing;
+  }
+
+  const { data, error } = await supabase
     .from("intakes")
-    .select("id, data")
+    .update(row)
     .eq("call_id", callId)
+    .select(INTAKE_SELECT)
     .maybeSingle();
-  if (loadErr) throw loadErr;
-  if (!existing) throw new Error("Intake not found");
-
-  const { top, data } = buildIntakeRowUpdateFromPatch(
-    patch,
-    (existing.data as Record<string, unknown> | null) ?? null
-  );
-
-  const { error: updateErr } = await supabase
-    .from("intakes")
-    .update({ ...top, data })
-    .eq("call_id", callId);
-  if (updateErr) throw updateErr;
-
-  const refreshed = await fetchIntakeByCallId(supabase, callId);
-  if (!refreshed) throw new Error("Intake not found after update");
-  return refreshed;
+  if (error) throw error;
+  if (!data) throw new Error("Intake not found");
+  return intakeFromIntakesRow(data as unknown as Record<string, unknown>);
 }
 
 export async function linkIntakeToCase(

@@ -1,17 +1,95 @@
 import type { IntakeFlat } from "@/lib/intake-types";
 
-type JsonRecord = Record<string, unknown>;
-
-/** Maps flat intake field keys to top-level column or nested `data` json path. */
-const TOP_LEVEL_KEYS = new Set([
+/** Plain columns on `public.intakes` that staff / router may edit (excludes id, call_id, created_at, case_id). */
+export const INTAKE_EDITABLE_COLUMNS = [
   "name",
   "phone",
   "accident_date",
   "quo_link",
   "transcript",
+  "how_found",
+  "map_location",
+  "accident_time",
+  "representation_date",
+  "accident_location",
+  "city",
+  "county",
+  "accident_description",
+  "police_department",
+  "police_report_no",
+  "ticket_issued",
+  "ticket_who",
+  "ticket_reason",
+  "email",
+  "address",
+  "dob",
+  "sex",
+  "dl_number",
+  "spouse_name",
+  "emergency_contact",
+  "passengers",
+  "vehicle",
+  "vehicle_owner",
+  "drivable",
+  "towed",
+  "towed_by",
+  "vehicle_location",
+  "has_loan",
+  "lienholder",
+  "rental_needed",
+  "body_shop",
+  "employer",
+  "job_description",
+  "missed_work",
+  "salary_rate",
+  "other_driver_name",
+  "other_driver_phone",
+  "other_driver_dob",
+  "other_driver_address",
+  "other_driver_dl",
+  "other_driver_car_owner",
+  "client_insurance",
+  "client_policy_no",
+  "client_claim_no",
+  "third_party_insurance",
+  "third_party_policy_no",
+  "third_party_claim_no",
+  "pip",
+  "med_pay",
+  "um_uim",
+  "ems",
+  "hospital_bill",
+  "hospital",
+  "treating_doctor",
+  "injury_types",
+  "medicaid",
+  "medicare",
+  "health_insurance",
+  "notes",
+] as const satisfies readonly (keyof IntakeFlat)[];
+
+export type IntakeEditableColumn = (typeof INTAKE_EDITABLE_COLUMNS)[number];
+
+const EDITABLE_SET = new Set<string>(INTAKE_EDITABLE_COLUMNS);
+
+const BOOL_COLUMNS = new Set<string>([
+  "ticket_issued",
+  "drivable",
+  "towed",
+  "has_loan",
+  "rental_needed",
+  "missed_work",
+  "pip",
+  "med_pay",
+  "um_uim",
+  "ems",
+  "hospital_bill",
+  "medicaid",
+  "medicare",
 ]);
 
-const DATA_PATH: Partial<Record<keyof IntakeFlat, [string, string] | "notes_root">> = {
+/** Paths in legacy `data` jsonb → flat column (for reading old rows until backfilled). */
+const LEGACY_DATA_PATH: Partial<Record<IntakeEditableColumn, [string, string] | "notes_root">> = {
   how_found: ["referral", "how_found"],
   map_location: ["referral", "map_location"],
   accident_time: ["accident", "time"],
@@ -73,50 +151,72 @@ const DATA_PATH: Partial<Record<keyof IntakeFlat, [string, string] | "notes_root
   notes: "notes_root",
 };
 
-function setNested(obj: JsonRecord, section: string, key: string, value: unknown): void {
-  const sec = (obj[section] as JsonRecord | undefined) ?? {};
-  sec[key] = value;
-  obj[section] = sec;
+function legacyValue(
+  data: Record<string, unknown> | null | undefined,
+  col: IntakeEditableColumn
+): unknown {
+  if (!data) return null;
+  const path = LEGACY_DATA_PATH[col];
+  if (!path) return null;
+  if (path === "notes_root") return data.notes ?? null;
+  const [section, key] = path;
+  const sec = data[section] as Record<string, unknown> | undefined;
+  if (!sec) return null;
+  const v = sec[key];
+  if (Array.isArray(v)) return v.map(String).join(", ");
+  return v ?? null;
 }
 
-/** Merge editable flat fields into an intakes row update (`top` + `data` jsonb). */
-export function buildIntakeRowUpdateFromPatch(
-  patch: Partial<IntakeFlat>,
-  existingData: JsonRecord | null
-): { top: Record<string, unknown>; data: JsonRecord } {
-  const top: Record<string, unknown> = {};
-  const data: JsonRecord = { ...(existingData ?? {}) };
+function coerceBool(v: unknown): boolean | null {
+  if (v === null || v === undefined || v === "") return null;
+  if (typeof v === "boolean") return v;
+  if (v === "true" || v === true) return true;
+  if (v === "false" || v === false) return false;
+  return null;
+}
 
-  for (const [key, value] of Object.entries(patch)) {
-    if (key === "id" || key === "call_id" || key === "created_at" || key === "case_id") continue;
-    const k = key as keyof IntakeFlat;
-    if (TOP_LEVEL_KEYS.has(key)) {
-      top[key] = value === "" ? null : value;
-      continue;
+/** Map a raw `intakes` row (plain cols + optional legacy `data`) into IntakeFlat. */
+export function intakeFromIntakesRow(r: Record<string, unknown>): IntakeFlat {
+  const legacy = (r.data as Record<string, unknown> | null) ?? null;
+  const out: Record<string, unknown> = {
+    id: r.id,
+    call_id: r.call_id ?? null,
+    created_at: r.created_at ?? null,
+    case_id: r.case_id ?? null,
+  };
+
+  for (const col of INTAKE_EDITABLE_COLUMNS) {
+    let v = r[col];
+    if (v === null || v === undefined || v === "") {
+      v = legacyValue(legacy, col);
     }
-    const path = DATA_PATH[k];
-    if (!path) continue;
-    if (path === "notes_root") {
-      data.notes = value === "" || value === null ? null : value;
-      continue;
-    }
-    const [section, field] = path;
-    if (typeof value === "boolean" || value === null) {
-      setNested(data, section, field, value);
-    } else if (value === "") {
-      setNested(data, section, field, null);
-    } else if (k === "passengers" || k === "injury_types") {
-      const items = String(value)
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-      setNested(data, section, field, items);
+    if (BOOL_COLUMNS.has(col)) {
+      out[col] = coerceBool(v);
+    } else if (v === null || v === undefined) {
+      out[col] = null;
     } else {
-      setNested(data, section, field, value);
+      out[col] = typeof v === "string" ? v : String(v);
     }
   }
 
-  return { top, data };
+  return out as IntakeFlat;
+}
+
+/** Build a plain-column UPDATE payload (never writes nested `data`). */
+export function buildIntakePlainColumnUpdate(patch: Partial<IntakeFlat>): Record<string, unknown> {
+  const row: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(patch)) {
+    if (!EDITABLE_SET.has(key)) continue;
+    if (BOOL_COLUMNS.has(key)) {
+      if (value === "" || value === undefined) row[key] = null;
+      else row[key] = coerceBool(value);
+    } else if (value === "") {
+      row[key] = null;
+    } else {
+      row[key] = value ?? null;
+    }
+  }
+  return row;
 }
 
 export const INTAKE_FIELD_SECTIONS: {
