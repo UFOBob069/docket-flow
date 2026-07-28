@@ -1,7 +1,7 @@
 "use client";
 
 import type { IntakeFlat } from "@/lib/intake-types";
-import { Button, Card, CardBody, Textarea } from "@/components/ui";
+import { Badge, Button, Card, CardBody, Textarea } from "@/components/ui";
 
 type Props = {
   intake: IntakeFlat;
@@ -12,6 +12,7 @@ type Props = {
   onStartEdit: () => void;
   onChangeNotes: (value: string | null) => void;
   onSave: () => void;
+  onCancel: () => void;
 };
 
 export function InternalNotes({
@@ -23,8 +24,10 @@ export function InternalNotes({
   onStartEdit,
   onChangeNotes,
   onSave,
+  onCancel,
 }: Props) {
   const notes = editing ? draft.notes : intake.notes;
+  const dirty = (intake.notes ?? null) !== (draft.notes ?? null);
 
   return (
     <Card className="rounded-xl shadow-none">
@@ -32,29 +35,36 @@ export function InternalNotes({
         <div ref={notesRef} tabIndex={-1} className="outline-none">
           <div className="flex items-center justify-between gap-2">
             <h2 className="text-base font-semibold text-text">Internal Notes</h2>
-            {!editing && (
+            {!editing ? (
               <Button size="sm" variant="secondary" onClick={onStartEdit}>
                 {notes?.trim() ? "Edit note" : "Add note"}
               </Button>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                {dirty && <Badge variant="warning">Unsaved</Badge>}
+                <Button size="sm" disabled={busy || !dirty} onClick={onSave}>
+                  {busy ? "Saving…" : "Save"}
+                </Button>
+                <Button size="sm" variant="ghost" disabled={busy} onClick={onCancel}>
+                  Cancel
+                </Button>
+              </div>
             )}
           </div>
 
           {editing ? (
-            <div className="mt-3 space-y-2">
+            <div className="mt-3">
               <Textarea
                 rows={5}
                 value={String(notes ?? "")}
                 onChange={(e) => onChangeNotes(e.target.value || null)}
                 placeholder="Internal follow-up notes…"
               />
-              <Button size="sm" disabled={busy} onClick={onSave}>
-                {busy ? "Saving…" : "Save note"}
-              </Button>
             </div>
           ) : notes?.trim() ? (
             <p className="mt-2 whitespace-pre-wrap text-sm text-text-secondary">{notes}</p>
           ) : (
-            <p className="mt-2 text-sm text-text-dim">No internal notes yet.</p>
+            <p className="mt-2 italic text-sm text-text-dim">Not provided</p>
           )}
         </div>
       </CardBody>

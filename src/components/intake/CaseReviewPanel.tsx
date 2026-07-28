@@ -19,7 +19,12 @@ export function CaseReviewPanel({ intake, callId }: Props) {
     <Card className="rounded-xl shadow-none">
       <CardBody className="space-y-4 !px-4 !py-4">
         <div className="flex items-start justify-between gap-2">
-          <h2 className="text-base font-semibold text-text">Case Review</h2>
+          <div>
+            <h2 className="text-base font-semibold text-text">Case Review</h2>
+            <p className="mt-0.5 text-xs text-text-muted">
+              Heuristic checklist from filled fields — not an automated score or legal opinion.
+            </p>
+          </div>
           {promoted ? <Badge variant="success">Promoted</Badge> : <Badge variant="primary">Open</Badge>}
         </div>
 

@@ -9,24 +9,9 @@ import { Badge, Button } from "@/components/ui";
 type Props = {
   intake: IntakeFlat;
   callId: string;
-  editing: boolean;
-  busy: boolean;
-  dirty: boolean;
-  onToggleEdit: () => void;
-  onSave: () => void;
-  onCancelEdit: () => void;
 };
 
-export function IntakeHeader({
-  intake,
-  callId,
-  editing,
-  busy,
-  dirty,
-  onToggleEdit,
-  onSave,
-  onCancelEdit,
-}: Props) {
+export function IntakeHeader({ intake, callId }: Props) {
   const promoted = Boolean(intake.case_id);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -82,7 +67,6 @@ export function IntakeHeader({
                 <Badge variant="primary">Open</Badge>
               )}
               {intake.how_found?.trim() && <Badge variant="default">{intake.how_found}</Badge>}
-              {dirty && editing && <Badge variant="warning">Unsaved changes</Badge>}
             </div>
           </div>
 
@@ -121,66 +105,42 @@ export function IntakeHeader({
                 Open in Quo
               </a>
             )}
-            {editing ? (
-              <>
-                <Button size="sm" disabled={busy || !dirty} onClick={onSave}>
-                  {busy ? "Saving…" : "Save changes"}
-                </Button>
-                <Button size="sm" variant="ghost" disabled={busy} onClick={onCancelEdit}>
-                  Cancel
-                </Button>
-              </>
-            ) : (
-              <div className="relative" ref={menuRef}>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  aria-expanded={menuOpen}
-                  aria-haspopup="menu"
-                  onClick={() => setMenuOpen((o) => !o)}
+            <div className="relative" ref={menuRef}>
+              <Button
+                size="sm"
+                variant="secondary"
+                aria-expanded={menuOpen}
+                aria-haspopup="menu"
+                onClick={() => setMenuOpen((o) => !o)}
+              >
+                More
+              </Button>
+              {menuOpen && (
+                <div
+                  role="menu"
+                  className="absolute right-0 z-40 mt-1 w-48 rounded-lg border border-border bg-white py-1 shadow-lg"
                 >
-                  More
-                </Button>
-                {menuOpen && (
-                  <div
-                    role="menu"
-                    className="absolute right-0 z-40 mt-1 w-48 rounded-lg border border-border bg-white py-1 shadow-lg"
-                  >
-                    {!promoted && (
-                      <button
-                        type="button"
-                        role="menuitem"
-                        className="block w-full px-3 py-2 text-left text-sm text-text hover:bg-surface-alt"
-                        onClick={() => {
-                          setMenuOpen(false);
-                          onToggleEdit();
-                        }}
-                      >
-                        Edit fields
-                      </button>
-                    )}
-                    {intake.phone?.trim() && (
-                      <button
-                        type="button"
-                        role="menuitem"
-                        className="block w-full px-3 py-2 text-left text-sm text-text hover:bg-surface-alt"
-                        onClick={() => void copyText(intake.phone!.trim(), "Phone number")}
-                      >
-                        Copy phone number
-                      </button>
-                    )}
+                  {intake.phone?.trim() && (
                     <button
                       type="button"
                       role="menuitem"
                       className="block w-full px-3 py-2 text-left text-sm text-text hover:bg-surface-alt"
-                      onClick={() => void copyText(window.location.href, "Intake link")}
+                      onClick={() => void copyText(intake.phone!.trim(), "Phone number")}
                     >
-                      Copy intake link
+                      Copy phone number
                     </button>
-                  </div>
-                )}
-              </div>
-            )}
+                  )}
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="block w-full px-3 py-2 text-left text-sm text-text hover:bg-surface-alt"
+                    onClick={() => void copyText(window.location.href, "Intake link")}
+                  >
+                    Copy intake link
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

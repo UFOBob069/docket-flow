@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
-import { INTAKE_DETAIL_SECTIONS } from "@/lib/intake-detail";
+import { INTAKE_DETAIL_SECTIONS, sectionIdForField } from "@/lib/intake-detail";
 import type { IntakeFlat, IntakeInteraction } from "@/lib/intake-types";
 import { useIntakeApi } from "@/hooks/useIntakeApi";
 import { useHydrated } from "@/hooks/useHydrated";
@@ -21,10 +21,6 @@ import { TranscriptAccordion } from "@/components/intake/TranscriptAccordion";
 import { InternalNotes } from "@/components/intake/InternalNotes";
 import { ActivityTimeline } from "@/components/intake/ActivityTimeline";
 
-function intakesEqual(a: IntakeFlat, b: IntakeFlat): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-
 export default function IntakeDetailPage() {
   const params = useParams();
   const callId = decodeURIComponent(String(params.callId ?? ""));
@@ -36,17 +32,12 @@ export default function IntakeDetailPage() {
   const [intake, setIntake] = useState<IntakeFlat | null>(null);
   const [interactions, setInteractions] = useState<IntakeInteraction[]>([]);
   const [draft, setDraft] = useState<IntakeFlat | null>(null);
-  const [editing, setEditing] = useState(false);
+  const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [highlightedKey, setHighlightedKey] = useState<keyof IntakeFlat | null>(null);
   const notesRef = useRef<HTMLDivElement>(null);
-
-  const dirty = useMemo(() => {
-    if (!intake || !draft) return false;
-    return !intakesEqual(intake, draft);
-  }, [intake, draft]);
 
   const load = useCallback(async () => {
     if (!api.ready || !callId) return;
@@ -84,7 +75,7 @@ export default function IntakeDetailPage() {
       );
       setIntake(data.intake);
       setDraft(data.intake);
-      setEditing(false);
+      setEditingSectionId(null);
       setHighlightedKey(null);
       setMsg("Saved");
     } catch (e) {
@@ -98,22 +89,27 @@ export default function IntakeDetailPage() {
     setDraft((prev) => (prev ? ({ ...prev, [key]: value } as IntakeFlat) : prev));
   }
 
-  function startEdit() {
+  function startSectionEdit(sectionId: string) {
     if (intake?.case_id) return;
-    setDraft(intake);
-    setEditing(true);
+    if (editingSectionId && editingSectionId !== sectionId) {
+      setDraft(intake);
+    } else if (!editingSectionId) {
+      setDraft(intake);
+    }
+    setEditingSectionId(sectionId);
   }
 
-  function cancelEdit() {
+  function cancelSectionEdit() {
     setDraft(intake);
-    setEditing(false);
+    setEditingSectionId(null);
     setHighlightedKey(null);
   }
 
   function jumpToField(key: keyof IntakeFlat) {
-    if (!intake?.case_id) {
+    const sectionId = sectionIdForField(key);
+    if (!intake?.case_id && sectionId) {
       setDraft(intake);
-      setEditing(true);
+      setEditingSectionId(sectionId);
     }
     setHighlightedKey(key);
     window.requestAnimationFrame(() => {
@@ -125,7 +121,7 @@ export default function IntakeDetailPage() {
   function scrollToNotes() {
     if (!intake?.case_id) {
       setDraft(intake);
-      setEditing(true);
+      setEditingSectionId("notes");
     }
     window.requestAnimationFrame(() => {
       notesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -162,18 +158,12 @@ export default function IntakeDetailPage() {
     );
   }
 
+  const canEdit = !intake.case_id;
+  const notesEditing = editingSectionId === "notes";
+
   return (
     <div className="min-h-screen bg-[#f4f5f7]">
-      <IntakeHeader
-        intake={intake}
-        callId={callId}
-        editing={editing}
-        busy={busy}
-        dirty={dirty}
-        onToggleEdit={startEdit}
-        onSave={() => void saveEdits()}
-        onCancelEdit={cancelEdit}
-      />
+      <IntakeHeader intake={intake} callId={callId} />
 
       <div className="mx-auto max-w-[1280px] px-4 py-5 sm:px-6 lg:px-8">
         {msg && (
@@ -186,16 +176,14 @@ export default function IntakeDetailPage() {
         )}
 
         <div className="grid grid-cols-1 gap-5 md:grid-cols-12">
-          {/* Main column */}
           <div className="space-y-5 md:col-span-7 lg:col-span-8">
-            <CaseOverviewCard intake={editing ? draft : intake} />
+            <CaseOverviewCard intake={intake} />
 
-            {/* Sidebar stack on mobile — after overview */}
             <div className="space-y-4 md:hidden">
               <CaseReviewPanel intake={intake} callId={callId} />
               <MissingInformationCard
-                intake={editing ? draft : intake}
-                editing={editing}
+                intake={draft}
+                editing={Boolean(editingSectionId)}
                 onEditField={jumpToField}
               />
               <NextStepsCard
@@ -215,10 +203,15 @@ export default function IntakeDetailPage() {
                   section={section}
                   intake={intake}
                   draft={draft}
-                  editing={editing}
-                  defaultOpen={Boolean(section.critical) || section.id === "client"}
+                  editing={editingSectionId === section.id}
+                  busy={busy}
+                  canEdit={canEdit}
+                  defaultOpen={Boolean(section.critical) || section.id === "client" || section.id === "referral"}
                   highlightedKey={highlightedKey}
                   onChange={onFieldChange}
+                  onStartEdit={() => startSectionEdit(section.id)}
+                  onSave={() => void saveEdits()}
+                  onCancel={cancelSectionEdit}
                 />
               ))}
             </section>
@@ -228,24 +221,24 @@ export default function IntakeDetailPage() {
             <InternalNotes
               intake={intake}
               draft={draft}
-              editing={editing}
+              editing={notesEditing}
               busy={busy}
               notesRef={notesRef}
-              onStartEdit={startEdit}
+              onStartEdit={() => startSectionEdit("notes")}
               onChangeNotes={(v) => onFieldChange("notes", v)}
               onSave={() => void saveEdits()}
+              onCancel={cancelSectionEdit}
             />
 
             <ActivityTimeline intake={intake} interactions={interactions} />
           </div>
 
-          {/* Desktop / tablet sticky sidebar */}
           <aside className="hidden md:col-span-5 md:block lg:col-span-4">
             <div className="sticky top-[130px] space-y-4">
               <CaseReviewPanel intake={intake} callId={callId} />
               <MissingInformationCard
-                intake={editing ? draft : intake}
-                editing={editing}
+                intake={draft}
+                editing={Boolean(editingSectionId)}
                 onEditField={jumpToField}
               />
               <NextStepsCard

@@ -323,7 +323,7 @@ export const INTAKE_DETAIL_SECTIONS: DetailSectionConfig[] = [
     id: "referral",
     title: "Referral and marketing",
     fields: [
-      { key: "how_found", label: "Referral source" },
+      { key: "how_found", label: "Source / referral" },
       { key: "map_location", label: "Map / location" },
     ],
   },
@@ -340,6 +340,14 @@ export const INTAKE_DETAIL_SECTIONS: DetailSectionConfig[] = [
     ],
   },
 ];
+
+export function sectionIdForField(key: keyof IntakeFlat): string | null {
+  for (const section of INTAKE_DETAIL_SECTIONS) {
+    if (section.fields.some((f) => f.key === key)) return section.id;
+  }
+  if (key === "notes") return "notes";
+  return null;
+}
 
 export function sectionHasAnyValue(intake: IntakeFlat, section: DetailSectionConfig): boolean {
   return section.fields.some((f) => isIntakeFilled(intake[f.key]));

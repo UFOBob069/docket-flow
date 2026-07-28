@@ -26,6 +26,13 @@ export const metadata: Metadata = {
   title: "DocketFlow · Case deadlines → Calendar",
   description:
     "Ingest scheduling orders, review AI-extracted deadlines, sync to Google Calendar.",
+  icons: {
+    icon: [
+      { url: "/favicon-df.svg", type: "image/svg+xml" },
+      { url: "/favicon-df.png", type: "image/png" },
+    ],
+    apple: "/apple-icon.png",
+  },
 };
 
 export default function RootLayout({

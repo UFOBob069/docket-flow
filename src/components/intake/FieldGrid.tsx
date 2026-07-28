@@ -3,7 +3,6 @@
 import type { IntakeFlat } from "@/lib/intake-types";
 import {
   formatIntakeValue,
-  isIntakeFilled,
   type DetailSectionConfig,
 } from "@/lib/intake-detail";
 import { Input, Textarea } from "@/components/ui";
@@ -42,15 +41,10 @@ export function FieldGrid({
   onChange,
 }: Props) {
   const model = editing ? draft : intake;
-  const fields = editing
-    ? section.fields
-    : section.fields.filter((f) => isIntakeFilled(intake[f.key]));
-
-  if (!fields.length && !editing) return null;
 
   return (
     <dl className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
-      {fields.map((field) => {
+      {section.fields.map((field) => {
         const value = model[field.key];
         const display = formatIntakeValue(value);
         const missing = display === "Not provided";
@@ -61,12 +55,15 @@ export function FieldGrid({
           <div
             key={field.key}
             id={`field-${String(field.key)}`}
-            className={`${field.multiline ? "sm:col-span-2" : ""} ${
-              highlight ? "rounded-md ring-2 ring-primary/40 ring-offset-2" : ""
-            }`}
+            className={`${field.multiline ? "sm:col-span-2" : ""} rounded-md px-1.5 py-1 ${
+              highlight ? "ring-2 ring-primary/40 ring-offset-1" : ""
+            } ${!editing && missing ? "bg-warning-light/50" : ""}`}
           >
             <dt className="text-[11px] font-medium uppercase tracking-wide text-text-muted">
               {field.label}
+              {!editing && missing && (
+                <span className="ml-1.5 font-normal normal-case text-warning">Missing</span>
+              )}
             </dt>
             {editing ? (
               isBool ? (
@@ -99,7 +96,7 @@ export function FieldGrid({
             ) : (
               <dd
                 className={`mt-0.5 text-sm whitespace-pre-wrap ${
-                  missing ? "text-text-dim" : "text-text"
+                  missing ? "italic text-text-dim" : "text-text"
                 }`}
               >
                 {display}
