@@ -18,6 +18,11 @@ const navLinks = [
     match: (p: string) => p.startsWith("/calendar/missing-sync"),
   },
   {
+    href: "/intakes",
+    label: "Intakes",
+    match: (p: string) => p.startsWith("/intakes"),
+  },
+  {
     href: "/cases",
     label: "Cases",
     match: (p: string) => p.startsWith("/cases") && p !== "/cases/new",
