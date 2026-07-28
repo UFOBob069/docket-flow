@@ -13,7 +13,6 @@ import { PageSkeleton } from "@/components/PageSkeleton";
 import { PageWrapper } from "@/components/ui";
 import { IntakeHeader } from "@/components/intake/IntakeHeader";
 import { CaseOverviewCard } from "@/components/intake/CaseOverviewCard";
-import { CaseReviewPanel } from "@/components/intake/CaseReviewPanel";
 import { MissingInformationCard } from "@/components/intake/MissingInformationCard";
 import { NextStepsCard } from "@/components/intake/NextStepsCard";
 import { IntakeSection } from "@/components/intake/IntakeSection";
@@ -180,7 +179,6 @@ export default function IntakeDetailPage() {
             <CaseOverviewCard intake={intake} />
 
             <div className="space-y-4 md:hidden">
-              <CaseReviewPanel intake={intake} callId={callId} />
               <MissingInformationCard
                 intake={draft}
                 editing={Boolean(editingSectionId)}
@@ -234,8 +232,7 @@ export default function IntakeDetailPage() {
           </div>
 
           <aside className="hidden md:col-span-5 md:block lg:col-span-4">
-            <div className="sticky top-[130px] space-y-4">
-              <CaseReviewPanel intake={intake} callId={callId} />
+            <div className="sticky top-[130px] max-h-[calc(100vh-9rem)] space-y-4 overflow-y-auto overscroll-contain pb-2 pr-1">
               <MissingInformationCard
                 intake={draft}
                 editing={Boolean(editingSectionId)}

@@ -153,32 +153,6 @@ export function getMissingIntakeFields(intake: IntakeFlat): MissingFieldItem[] {
   });
 }
 
-export function getNeedsReviewItems(intake: IntakeFlat): string[] {
-  const out: string[] = [];
-  const treatmentPresent =
-    isIntakeFilled(intake.hospital) ||
-    isIntakeFilled(intake.treating_doctor) ||
-    intake.ems === true;
-  if (!isIntakeFilled(intake.accident_date)) out.push("Accident date missing");
-  if (!intakeLocationLine(intake)) out.push("Accident location incomplete");
-  if (!isIntakeFilled(intake.injury_types)) out.push("Injury details incomplete");
-  if (!treatmentPresent) out.push("Treatment not recorded");
-  if (
-    !isIntakeFilled(intake.client_insurance) &&
-    !isIntakeFilled(intake.third_party_insurance) &&
-    !isIntakeFilled(intake.health_insurance)
-  ) {
-    out.push("Insurance information missing");
-  }
-  if (!isIntakeFilled(intake.police_department) && !isIntakeFilled(intake.police_report_no)) {
-    out.push("Police / incident report unknown");
-  }
-  if (!isIntakeFilled(intake.representation_date)) {
-    out.push("Representation status unknown");
-  }
-  return out;
-}
-
 export type DetailSectionField = {
   key: keyof IntakeFlat;
   label: string;
