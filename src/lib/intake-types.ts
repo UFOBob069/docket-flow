@@ -1,4 +1,4 @@
-/** Row shape from `public.intakes_flat` (read) + `case_id` from base table when joined. */
+/** Row shape from `public.intakes` plain columns (+ optional legacy `data` jsonb fallback on read). */
 export type IntakeFlat = {
   id: string;
   call_id: string | null;
