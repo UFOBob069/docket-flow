@@ -14,7 +14,6 @@ import { PageWrapper } from "@/components/ui";
 import { IntakeHeader } from "@/components/intake/IntakeHeader";
 import { CaseOverviewCard } from "@/components/intake/CaseOverviewCard";
 import { MissingInformationCard } from "@/components/intake/MissingInformationCard";
-import { NextStepsCard } from "@/components/intake/NextStepsCard";
 import { IntakeSection } from "@/components/intake/IntakeSection";
 import { TranscriptAccordion } from "@/components/intake/TranscriptAccordion";
 import { InternalNotes } from "@/components/intake/InternalNotes";
@@ -117,17 +116,6 @@ export default function IntakeDetailPage() {
     });
   }
 
-  function scrollToNotes() {
-    if (!intake?.case_id) {
-      setDraft(intake);
-      setEditingSectionId("notes");
-    }
-    window.requestAnimationFrame(() => {
-      notesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      notesRef.current?.focus();
-    });
-  }
-
   if (!hydrated) return <PageSkeleton />;
   if (!isSupabaseConfigured()) {
     return (
@@ -178,16 +166,11 @@ export default function IntakeDetailPage() {
           <div className="space-y-5 md:col-span-7 lg:col-span-8">
             <CaseOverviewCard intake={intake} />
 
-            <div className="space-y-4 md:hidden">
+            <div className="md:hidden">
               <MissingInformationCard
                 intake={draft}
                 editing={Boolean(editingSectionId)}
                 onEditField={jumpToField}
-              />
-              <NextStepsCard
-                intake={intake}
-                interactions={interactions}
-                onScrollToNotes={scrollToNotes}
               />
             </div>
 
@@ -232,16 +215,11 @@ export default function IntakeDetailPage() {
           </div>
 
           <aside className="hidden md:col-span-5 md:block lg:col-span-4">
-            <div className="sticky top-[130px] max-h-[calc(100vh-9rem)] space-y-4 overflow-y-auto overscroll-contain pb-2 pr-1">
+            <div className="sticky top-[130px] max-h-[calc(100vh-9rem)] overflow-y-auto overscroll-contain pb-2 pr-1">
               <MissingInformationCard
                 intake={draft}
                 editing={Boolean(editingSectionId)}
                 onEditField={jumpToField}
-              />
-              <NextStepsCard
-                intake={intake}
-                interactions={interactions}
-                onScrollToNotes={scrollToNotes}
               />
             </div>
           </aside>
