@@ -73,6 +73,20 @@ export async function fetchIntakeByCallId(
   };
 }
 
+function isMissingRelationError(error: { code?: string; message?: string; details?: string; hint?: string }): boolean {
+  const code = error.code ?? "";
+  // Postgres undefined_table, or PostgREST schema cache miss (HTTP 404 → PGRST205 / similar).
+  if (code === "42P01" || code === "PGRST205" || code === "PGRST116") return true;
+  const hay = `${error.message ?? ""} ${error.details ?? ""} ${error.hint ?? ""}`.toLowerCase();
+  return (
+    hay.includes("intake_interactions") &&
+    (hay.includes("does not exist") ||
+      hay.includes("could not find") ||
+      hay.includes("schema cache") ||
+      hay.includes("not find the table"))
+  );
+}
+
 export async function fetchIntakeInteractions(
   supabase: SupabaseClient,
   callId: string
@@ -83,8 +97,10 @@ export async function fetchIntakeInteractions(
     .eq("intake_call_id", callId)
     .order("created_at", { ascending: true });
   if (error) {
-    if (error.code === "42P01") return [];
-    throw error;
+    // Table is owned by the intake router and may not exist yet — detail page should still load.
+    if (isMissingRelationError(error)) return [];
+    console.warn("[intake_interactions]", error.code, error.message);
+    return [];
   }
   return (data ?? []) as IntakeInteraction[];
 }
