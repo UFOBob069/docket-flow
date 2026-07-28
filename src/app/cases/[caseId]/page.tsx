@@ -1083,6 +1083,22 @@ export default function CaseDetailPage() {
         description: `Reassigned ${newContactIds.length} contacts`,
         userEmail: user.email ?? "",
       });
+      if (idToken) {
+        try {
+          const topicRes = await fetch(`/api/cases/${encodeURIComponent(caseId)}/sync-case-tracker-topic`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${idToken}`,
+            },
+          });
+          if (!topicRes.ok) {
+            console.warn("[reassign] Case Tracker Slack topic sync failed", topicRes.status);
+          }
+        } catch (topicErr) {
+          console.warn("[reassign] Case Tracker Slack topic sync error", topicErr);
+        }
+      }
       setShowReassign(false);
       flash(
         withGoogle.length > 0 && attendeeEmails.length > 0

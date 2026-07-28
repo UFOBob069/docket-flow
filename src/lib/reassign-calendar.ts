@@ -4,6 +4,7 @@ import { googleCalendarDescription } from "@/lib/calendar-payload";
 import { caseCalendarInviteContactIds } from "@/lib/case-attorneys";
 import { caseDisplayName } from "@/lib/case-display";
 import { mergeAttendeeEmailLists } from "@/lib/calendar-global-recipients";
+import { requestCaseTrackerSlackTopicSync } from "@/lib/case-tracker-client";
 import { reconcileCalendarEventTeam } from "@/lib/google-calendar";
 import { formatActivitySlackMessage } from "@/lib/slack-activity";
 import { postSlackChannelMessage } from "@/lib/slack-notify";
@@ -70,6 +71,12 @@ export async function reconcileCaseCalendarInvitesAfterReassign(
 
   if (!withGoogle.length || !attendeeEmails.length) {
     await maybeLogReassignActivity(supabase, c, opts?.source, 0);
+    if (opts?.source !== "case-tracker") {
+      void requestCaseTrackerSlackTopicSync(caseId, {
+        caseNumber: c.caseNumber ?? null,
+        source: opts?.source ?? "docketflow",
+      });
+    }
     return {
       ok: true,
       reconciledEventCount: 0,
@@ -105,6 +112,15 @@ export async function reconcileCaseCalendarInvitesAfterReassign(
   }
 
   await maybeLogReassignActivity(supabase, c, opts?.source, withGoogle.length);
+
+  // Case Tracker owns Slack channel topics — notify after assignment is saved.
+  if (opts?.source !== "case-tracker") {
+    void requestCaseTrackerSlackTopicSync(caseId, {
+      caseNumber: c.caseNumber ?? null,
+      source: opts?.source ?? "docketflow",
+    });
+  }
+
   return {
     ok: true,
     reconciledEventCount: withGoogle.length,
