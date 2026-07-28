@@ -153,45 +153,16 @@ export function getMissingIntakeFields(intake: IntakeFlat): MissingFieldItem[] {
   });
 }
 
-export function getPositiveIndicators(intake: IntakeFlat): string[] {
-  const out: string[] = [];
-  if (isIntakeFilled(intake.employer) || isIntakeFilled(intake.job_description)) {
-    out.push("Identifiable employer / workplace context");
-  }
-  if (isIntakeFilled(intake.injury_types)) {
-    out.push(`Reported injuries: ${intake.injury_types}`);
-  }
-  if (isIntakeFilled(intake.accident_date)) {
-    out.push(`Incident date recorded (${intake.accident_date})`);
-  }
-  if (intakeLocationLine(intake)) {
-    out.push(`Location captured (${intakeLocationLine(intake)})`);
-  }
-  if (isIntakeFilled(intake.accident_description) || isIntakeFilled(intake.notes)) {
-    out.push("Written incident summary available");
-  }
-  if (isIntakeFilled(intake.phone)) out.push("Client phone on file");
-  if (isIntakeFilled(intake.name)) out.push("Client name on file");
-  if (intake.ems === true || isIntakeFilled(intake.hospital) || isIntakeFilled(intake.treating_doctor)) {
-    out.push("Treatment / EMS information present");
-  }
-  if (
-    isIntakeFilled(intake.client_insurance) ||
-    isIntakeFilled(intake.third_party_insurance) ||
-    isIntakeFilled(intake.health_insurance)
-  ) {
-    out.push("Some insurance information present");
-  }
-  return out;
-}
-
 export function getNeedsReviewItems(intake: IntakeFlat): string[] {
   const out: string[] = [];
   const treatmentPresent =
     isIntakeFilled(intake.hospital) ||
     isIntakeFilled(intake.treating_doctor) ||
     intake.ems === true;
-  if (!treatmentPresent) out.push("No treatment yet / treatment not recorded");
+  if (!isIntakeFilled(intake.accident_date)) out.push("Accident date missing");
+  if (!intakeLocationLine(intake)) out.push("Accident location incomplete");
+  if (!isIntakeFilled(intake.injury_types)) out.push("Injury details incomplete");
+  if (!treatmentPresent) out.push("Treatment not recorded");
   if (
     !isIntakeFilled(intake.client_insurance) &&
     !isIntakeFilled(intake.third_party_insurance) &&
@@ -200,14 +171,11 @@ export function getNeedsReviewItems(intake: IntakeFlat): string[] {
     out.push("Insurance information missing");
   }
   if (!isIntakeFilled(intake.police_department) && !isIntakeFilled(intake.police_report_no)) {
-    out.push("Police or incident report unknown");
+    out.push("Police / incident report unknown");
   }
   if (!isIntakeFilled(intake.representation_date)) {
     out.push("Representation status unknown");
   }
-  if (!isIntakeFilled(intake.injury_types)) out.push("Injury details incomplete");
-  if (!isIntakeFilled(intake.accident_date)) out.push("Accident date missing");
-  if (!intakeLocationLine(intake)) out.push("Accident location incomplete");
   return out;
 }
 
