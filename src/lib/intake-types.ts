@@ -105,6 +105,12 @@ export type IntakePromoteBody = {
   caseType: string;
   clientAlreadyInQuo?: "yes" | "no";
   clientPhone?: string;
+  clientEmail?: string | null;
+  clientStreetAddress?: string | null;
+  clientCity?: string | null;
+  clientState?: string | null;
+  clientZip?: string | null;
+  clientCountry?: string | null;
   /** Override split from intake name */
   clientFirstName?: string;
   clientLastName?: string;

@@ -49,6 +49,12 @@ export default function PromoteIntakePage() {
   const [clientLastName, setClientLastName] = useState("");
   const [clientAlreadyInQuo, setClientAlreadyInQuo] = useState<"" | "yes" | "no">("");
   const [clientPhone, setClientPhone] = useState("");
+  const [clientEmail, setClientEmail] = useState("");
+  const [clientStreetAddress, setClientStreetAddress] = useState("");
+  const [clientCity, setClientCity] = useState("");
+  const [clientState, setClientState] = useState("");
+  const [clientZip, setClientZip] = useState("");
+  const [clientCountry, setClientCountry] = useState("");
   const [preferredLanguage, setPreferredLanguage] = useState("");
   const [secondaryLanguage, setSecondaryLanguage] = useState("");
   const [dateOfBirth, setDateOfBirth] = useState("");
@@ -87,6 +93,8 @@ export default function PromoteIntakePage() {
         setClientFirstName(pre.clientFirstName);
         setClientLastName(pre.clientLastName);
         setClientPhone(formatUsPhoneDisplay(pre.clientPhone));
+        setClientEmail(pre.clientEmail);
+        setClientStreetAddress(pre.clientStreetAddress);
         setDateOfBirth(pre.dateOfBirth);
         setDateOfIncident(pre.dateOfIncident);
         setNotes(pre.notes);
@@ -151,6 +159,12 @@ export default function PromoteIntakePage() {
       caseType,
       clientAlreadyInQuo,
       clientPhone: clientAlreadyInQuo === "no" ? clientPhone : undefined,
+      clientEmail: clientEmail.trim() || null,
+      clientStreetAddress: clientStreetAddress.trim() || null,
+      clientCity: clientCity.trim() || null,
+      clientState: clientState.trim() || null,
+      clientZip: clientZip.trim() || null,
+      clientCountry: clientCountry.trim() || null,
       clientFirstName,
       clientLastName,
       dateOfBirth,
@@ -298,6 +312,71 @@ export default function PromoteIntakePage() {
                 </p>
               </div>
             )}
+            <div>
+              <Label>Client email</Label>
+              <Input
+                className="mt-1.5"
+                type="email"
+                autoComplete="email"
+                value={clientEmail}
+                onChange={(e) => setClientEmail(e.target.value)}
+                placeholder="client@example.com"
+              />
+            </div>
+            <fieldset className="space-y-3 rounded-lg border border-border px-3 py-3">
+              <legend className="px-1 text-sm font-medium text-text">Mailing address</legend>
+              <div>
+                <Label>Street address</Label>
+                <Input
+                  className="mt-1.5"
+                  autoComplete="street-address"
+                  value={clientStreetAddress}
+                  onChange={(e) => setClientStreetAddress(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <Label>City</Label>
+                  <Input
+                    className="mt-1.5"
+                    autoComplete="address-level2"
+                    value={clientCity}
+                    onChange={(e) => setClientCity(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label>State</Label>
+                  <Input
+                    className="mt-1.5"
+                    autoComplete="address-level1"
+                    value={clientState}
+                    onChange={(e) => setClientState(e.target.value)}
+                    placeholder="TX"
+                  />
+                </div>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <Label>ZIP code</Label>
+                  <Input
+                    className="mt-1.5"
+                    autoComplete="postal-code"
+                    value={clientZip}
+                    onChange={(e) => setClientZip(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label>Country</Label>
+                  <Input
+                    className="mt-1.5"
+                    autoComplete="country-name"
+                    value={clientCountry}
+                    onChange={(e) => setClientCountry(e.target.value)}
+                    placeholder="United States"
+                  />
+                </div>
+              </div>
+            </fieldset>
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <Label required>Primary language</Label>

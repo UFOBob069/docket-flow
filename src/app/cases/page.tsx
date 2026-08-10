@@ -17,11 +17,14 @@ import {
   type CaseTrackerPipeline,
 } from "@/lib/case-tracker-pipeline";
 import {
+  fetchCaseEventListStats,
   fetchCaseTrackerPipelineByCaseIds,
-  fetchCasesWithEvents,
+  fetchCasesList,
+  fetchLeanEventsForCaseFilters,
   subscribeCaseEventsFirm,
   subscribeCases,
   subscribeContacts,
+  type CaseEventListStats,
 } from "@/lib/supabase/repo";
 import { EVENT_KIND_FILTER_OPTIONS } from "@/lib/one-off-events";
 import type { CalendarEvent, Case, Contact, EventKind } from "@/lib/types";
@@ -104,7 +107,11 @@ export default function CasesListPage() {
   const router = useRouter();
   const hydrated = useHydrated();
   const { user, loading, supabaseReady } = useAuth();
-  const [bundled, setBundled] = useState<{ case: Case; events: CalendarEvent[] }[]>([]);
+  const [bundled, setBundled] = useState<Case[]>([]);
+  const [eventStatsByCaseId, setEventStatsByCaseId] = useState<Map<string, CaseEventListStats>>(
+    () => new Map()
+  );
+  const [filterEvents, setFilterEvents] = useState<CalendarEvent[] | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [search, setSearch] = useState("");
   const [attorneyFilterIds, setAttorneyFilterIds] = useState<string[]>([]);
@@ -122,31 +129,65 @@ export default function CasesListPage() {
   const [timelineEnd, setTimelineEnd] = useState(() => defaultEndFromStart(todayIso()));
   const [useEventDateFilter, setUseEventDateFilter] = useState(false);
 
-  const cases = useMemo(() => bundled.map((b) => b.case), [bundled]);
+  const cases = bundled;
   const eventsByCaseId = useMemo(() => {
     const m = new Map<string, CalendarEvent[]>();
-    for (const b of bundled) m.set(b.case.id, b.events);
+    if (!filterEvents) return m;
+    for (const e of filterEvents) {
+      const list = m.get(e.caseId);
+      if (list) list.push(e);
+      else m.set(e.caseId, [e]);
+    }
     return m;
-  }, [bundled]);
+  }, [filterEvents]);
+
+  const needsEventFilterRows = eventKindFilters.length > 0 || useEventDateFilter;
+  const needsEventFilterRowsRef = useRef(needsEventFilterRows);
+  needsEventFilterRowsRef.current = needsEventFilterRows;
 
   const loadBundled = useCallback(async () => {
     if (!user?.id) return;
     try {
       const supabase = getBrowserSupabase();
-      const rows = await fetchCasesWithEvents(supabase, user.id);
-      setBundled(rows);
+      const today = todayIso();
+      const [caseRows, stats] = await Promise.all([
+        fetchCasesList(supabase, user.id),
+        fetchCaseEventListStats(supabase, today),
+      ]);
+      setBundled(caseRows);
+      setEventStatsByCaseId(stats);
       try {
         const pipeline = await fetchCaseTrackerPipelineByCaseIds(
           supabase,
-          rows.map((r) => r.case.id)
+          caseRows.map((r) => r.id)
         );
         setPipelineByCaseId(pipeline);
       } catch (e) {
         console.warn("[cases] fetchCaseTrackerPipeline", e);
         setPipelineByCaseId(new Map());
       }
+      if (needsEventFilterRowsRef.current) {
+        try {
+          const rows = await fetchLeanEventsForCaseFilters(supabase);
+          setFilterEvents(rows);
+        } catch (e) {
+          console.warn("[cases] fetchLeanEventsForCaseFilters", e);
+        }
+      }
     } catch (e) {
-      console.warn("[cases] fetchCasesWithEvents", e);
+      console.warn("[cases] loadBundled", e);
+    }
+  }, [user?.id]);
+
+  const loadFilterEvents = useCallback(async () => {
+    if (!user?.id) return;
+    try {
+      const supabase = getBrowserSupabase();
+      const rows = await fetchLeanEventsForCaseFilters(supabase);
+      setFilterEvents(rows);
+    } catch (e) {
+      console.warn("[cases] fetchLeanEventsForCaseFilters", e);
+      setFilterEvents([]);
     }
   }, [user?.id]);
 
@@ -154,6 +195,7 @@ export default function CasesListPage() {
   loadBundledRef.current = loadBundled;
   const loadInFlightRef = useRef(false);
   const loadQueuedRef = useRef(false);
+  const lastVisibleFetchRef = useRef(0);
 
   const requestLoadBundled = useCallback(() => {
     if (loadInFlightRef.current) {
@@ -188,11 +230,24 @@ export default function CasesListPage() {
     };
   }, [user, loading, supabaseReady, requestLoadBundled]);
 
+  useEffect(() => {
+    if (!needsEventFilterRows) {
+      setFilterEvents(null);
+      return;
+    }
+    if (!supabaseReady || loading || !user) return;
+    void loadFilterEvents();
+  }, [needsEventFilterRows, supabaseReady, loading, user, loadFilterEvents]);
+
   /** Refetch when returning to the tab (Realtime may be off or delayed). */
   useEffect(() => {
     if (!supabaseReady || loading || !user) return;
     const onVisible = () => {
-      if (document.visibilityState === "visible") requestLoadBundled();
+      if (document.visibilityState !== "visible") return;
+      const now = Date.now();
+      if (now - lastVisibleFetchRef.current < 30_000) return;
+      lastVisibleFetchRef.current = now;
+      requestLoadBundled();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
@@ -257,13 +312,13 @@ export default function CasesListPage() {
     }
     list = list.filter((c) => caseMatchesAssignedRole(c, attorneyFilterIds, "attorney", contactById));
     list = list.filter((c) => caseMatchesAssignedRole(c, paralegalFilterIds, "paralegal", contactById));
-    if (eventKindFilters.length) {
+    if (eventKindFilters.length && filterEvents) {
       list = list.filter((c) => {
         const evs = eventsByCaseId.get(c.id) ?? [];
         return evs.some((e) => eventKindFilters.includes((e.eventKind ?? "other_event") as EventKind));
       });
     }
-    if (useEventDateFilter) {
+    if (useEventDateFilter && filterEvents) {
       list = list.filter((c) => {
         const evs = eventsByCaseId.get(c.id) ?? [];
         return evs.some((e) => eventInDateRange(e, timelineStart, timelineEnd));
@@ -304,6 +359,7 @@ export default function CasesListPage() {
     eventKindFilters,
     contactById,
     eventsByCaseId,
+    filterEvents,
     useEventDateFilter,
     timelineStart,
     timelineEnd,
@@ -693,16 +749,9 @@ export default function CasesListPage() {
             <Card className="mt-6">
               <div className="divide-y divide-border">
                 {filtered.map((c) => {
-                  const evs = eventsByCaseId.get(c.id) ?? [];
-                  const evCount = evs.length;
-                  const today = todayIso();
-                  const overdueCount = evs.filter(
-                    (e) =>
-                      e.included &&
-                      !e.completed &&
-                      !e.noiseFlag &&
-                      deadlineInclusiveEndDate(e) < today
-                  ).length;
+                  const stats = eventStatsByCaseId.get(c.id);
+                  const evCount = stats?.eventCount ?? 0;
+                  const overdueCount = stats?.overdueCount ?? 0;
                   const isArchived = c.status === "archived";
                   const pipeline = pipelineByCaseId.get(c.id);
                   const stageLabel = caseStageFilterLabel(pipeline);

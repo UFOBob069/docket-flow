@@ -118,6 +118,14 @@ export interface Case {
   clientLastName?: string | null;
   /** E.164 client phone synced to Quo */
   clientPhone?: string | null;
+  /** Optional client email */
+  clientEmail?: string | null;
+  /** Optional mailing address */
+  clientStreetAddress?: string | null;
+  clientCity?: string | null;
+  clientState?: string | null;
+  clientZip?: string | null;
+  clientCountry?: string | null;
   quoContactId?: string | null;
   /** Firm case number (required on new cases) */
   caseNumber?: string | null;

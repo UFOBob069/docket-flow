@@ -104,6 +104,12 @@ function caseFromRow(r: Record<string, unknown>): Case {
     clientFirstName: (r.client_first_name as string) ?? null,
     clientLastName: (r.client_last_name as string) ?? null,
     clientPhone: (r.client_phone as string) ?? null,
+    clientEmail: (r.client_email as string) ?? null,
+    clientStreetAddress: (r.client_street_address as string) ?? null,
+    clientCity: (r.client_city as string) ?? null,
+    clientState: (r.client_state as string) ?? null,
+    clientZip: (r.client_zip as string) ?? null,
+    clientCountry: (r.client_country as string) ?? null,
     quoContactId: (r.quo_contact_id as string) ?? null,
     caseNumber: (r.case_number as string) ?? null,
     causeNumber: (r.cause_number as string) ?? null,
@@ -298,13 +304,9 @@ export function subscribeCase(
 /** All firm cases (RLS is company-wide; `userId` is unused, kept for call-site stability). */
 export async function fetchCasesForUser(
   supabase: SupabaseClient,
-  _userId: string
+  userId: string
 ): Promise<Case[]> {
-  const rows = await fetchAllPagedRows(supabase, "cases", "*", {
-    column: "updated_at",
-    ascending: false,
-  });
-  return rows.map((r) => caseFromRow(r));
+  return fetchCasesList(supabase, userId);
 }
 
 /** `cases` table changes — caller refetches bundled data (e.g. `fetchCasesWithEvents`). */
@@ -380,7 +382,42 @@ const CASE_IDS_IN_CHUNK = 40;
 const POSTGREST_PAGE_SIZE = 1000;
 
 /** Coalesce realtime-driven full-list refetches. */
-const REALTIME_REFETCH_DEBOUNCE_MS = 2500;
+const REALTIME_REFETCH_DEBOUNCE_MS = 4000;
+
+/** Lean case columns for list/dashboard (skip unused bulk when possible). */
+const CASE_LIST_COLUMNS = [
+  "id",
+  "user_id",
+  "name",
+  "client_name",
+  "client_first_name",
+  "client_last_name",
+  "client_phone",
+  "client_email",
+  "client_street_address",
+  "client_city",
+  "client_state",
+  "client_zip",
+  "client_country",
+  "quo_contact_id",
+  "case_number",
+  "cause_number",
+  "court",
+  "date_of_incident",
+  "date_of_birth",
+  "notes",
+  "case_type",
+  "preferred_language",
+  "secondary_language",
+  "status",
+  "document_url",
+  "document_file_name",
+  "assigned_contact_ids",
+  "responsible_attorney_contact_id",
+  "event_attorney_contact_id",
+  "created_at",
+  "updated_at",
+].join(",");
 
 /**
  * Columns needed for firm list/dashboard (omit bulky Google invite maps / reminder payloads).
@@ -393,7 +430,6 @@ const FIRM_EVENT_LIST_COLUMNS = [
   "title",
   "date",
   "schedule_kind",
-  "description",
   "category",
   "event_kind",
   "start_date_time",
@@ -414,6 +450,20 @@ const FIRM_EVENT_LIST_COLUMNS = [
   "google_color_id",
   "created_at",
   "updated_at",
+].join(",");
+
+/** Even lighter columns for cases-list filters (kind / date window). */
+const FIRM_EVENT_FILTER_COLUMNS = [
+  "id",
+  "case_id",
+  "date",
+  "deadline_end_date",
+  "schedule_kind",
+  "start_date_time",
+  "event_kind",
+  "included",
+  "completed",
+  "noise_flag",
 ].join(",");
 
 function debounceNotify(fn: () => void, waitMs: number): { (): void; cancel: () => void } {
@@ -471,11 +521,120 @@ async function fetchAllFirmCaseEventRows(
   });
 }
 
+/** Lean cases for dashboard / cases list — avoids select * on every refresh. */
+export async function fetchCasesList(
+  supabase: SupabaseClient,
+  _userId: string
+): Promise<Case[]> {
+  const rows = await fetchAllPagedRows(supabase, "cases", CASE_LIST_COLUMNS, {
+    column: "updated_at",
+    ascending: false,
+  });
+  return rows.map((r) => caseFromRow(r));
+}
+
+/**
+ * Incomplete events with `date` on/before `endDate` (ISO YYYY-MM-DD).
+ * Covers overdue + next N days for the dashboard without loading completed history.
+ */
+export async function fetchIncompleteEventsThroughDate(
+  supabase: SupabaseClient,
+  endDate: string
+): Promise<CalendarEvent[]> {
+  const end = endDate.trim().slice(0, 10);
+  const acc: CalendarEvent[] = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from("case_events")
+      .select(FIRM_EVENT_LIST_COLUMNS)
+      .eq("completed", false)
+      .lte("date", end)
+      .order("date", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + POSTGREST_PAGE_SIZE - 1);
+    if (error) throw error;
+    const page = (data ?? []) as unknown as Record<string, unknown>[];
+    for (const r of page) acc.push(eventFromRow(r));
+    if (page.length < POSTGREST_PAGE_SIZE) break;
+    from += POSTGREST_PAGE_SIZE;
+  }
+  return acc;
+}
+
+/** Incomplete, included events whose deadline ended on/before `endDate` (auto-complete). */
+export async function fetchStaleEventsForAutoComplete(
+  supabase: SupabaseClient,
+  endDateInclusive: string
+): Promise<CalendarEvent[]> {
+  const end = endDateInclusive.trim().slice(0, 10);
+  const acc: CalendarEvent[] = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from("case_events")
+      .select(FIRM_EVENT_LIST_COLUMNS)
+      .eq("completed", false)
+      .eq("included", true)
+      .lte("date", end)
+      .order("id", { ascending: true })
+      .range(from, from + POSTGREST_PAGE_SIZE - 1);
+    if (error) throw error;
+    const page = (data ?? []) as unknown as Record<string, unknown>[];
+    for (const r of page) acc.push(eventFromRow(r));
+    if (page.length < POSTGREST_PAGE_SIZE) break;
+    from += POSTGREST_PAGE_SIZE;
+  }
+  return acc;
+}
+
+export type CaseEventListStats = {
+  eventCount: number;
+  overdueCount: number;
+};
+
+/** Per-case event totals for the Cases list (RPC — no full event payload). */
+export async function fetchCaseEventListStats(
+  supabase: SupabaseClient,
+  todayYmd: string
+): Promise<Map<string, CaseEventListStats>> {
+  const { data, error } = await supabase.rpc("case_event_list_stats", {
+    today_ymd: todayYmd.trim().slice(0, 10),
+  });
+  if (error) throw error;
+  const out = new Map<string, CaseEventListStats>();
+  for (const row of (data ?? []) as Array<{
+    case_id: string;
+    event_count: number | string;
+    overdue_count: number | string;
+  }>) {
+    out.set(String(row.case_id), {
+      eventCount: Number(row.event_count) || 0,
+      overdueCount: Number(row.overdue_count) || 0,
+    });
+  }
+  return out;
+}
+
+/**
+ * Lightweight event rows for Cases list filters (kind / date window).
+ * Prefer stats RPC when filters are off.
+ */
+export async function fetchLeanEventsForCaseFilters(
+  supabase: SupabaseClient
+): Promise<CalendarEvent[]> {
+  const rows = await fetchAllPagedRows(supabase, "case_events", FIRM_EVENT_FILTER_COLUMNS, {
+    column: "id",
+    ascending: true,
+  });
+  return rows.map((r) => eventFromRow(r));
+}
+
 export async function fetchCasesWithEvents(
   supabase: SupabaseClient,
   userId: string
 ): Promise<{ case: Case; events: CalendarEvent[] }[]> {
-  const cases = await fetchCasesForUser(supabase, userId);
+  const cases = await fetchCasesList(supabase, userId);
   if (!cases.length) return [];
 
   const eventsByCaseId = new Map<string, CalendarEvent[]>();
@@ -805,6 +964,12 @@ export async function createCase(
     client_first_name: clientFirst,
     client_last_name: clientLast,
     client_phone: input.clientPhone?.trim() || null,
+    client_email: input.clientEmail?.trim() || null,
+    client_street_address: input.clientStreetAddress?.trim() || null,
+    client_city: input.clientCity?.trim() || null,
+    client_state: input.clientState?.trim() || null,
+    client_zip: input.clientZip?.trim() || null,
+    client_country: input.clientCountry?.trim() || null,
     quo_contact_id: input.quoContactId?.trim() || null,
     case_number: input.caseNumber?.trim() || null,
     cause_number: input.causeNumber?.trim() || null,
@@ -839,6 +1004,13 @@ export async function updateCase(
   if (patch.clientFirstName !== undefined) row.client_first_name = patch.clientFirstName;
   if (patch.clientLastName !== undefined) row.client_last_name = patch.clientLastName;
   if (patch.clientPhone !== undefined) row.client_phone = patch.clientPhone;
+  if (patch.clientEmail !== undefined) row.client_email = patch.clientEmail?.trim() || null;
+  if (patch.clientStreetAddress !== undefined)
+    row.client_street_address = patch.clientStreetAddress?.trim() || null;
+  if (patch.clientCity !== undefined) row.client_city = patch.clientCity?.trim() || null;
+  if (patch.clientState !== undefined) row.client_state = patch.clientState?.trim() || null;
+  if (patch.clientZip !== undefined) row.client_zip = patch.clientZip?.trim() || null;
+  if (patch.clientCountry !== undefined) row.client_country = patch.clientCountry?.trim() || null;
   if (patch.quoContactId !== undefined) row.quo_contact_id = patch.quoContactId;
 
   if (

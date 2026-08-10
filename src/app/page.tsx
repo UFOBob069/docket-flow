@@ -10,7 +10,9 @@ import { getBrowserSupabase } from "@/lib/supabase/singleton";
 import { isTrackerPipelineActive, type CaseTrackerPipeline } from "@/lib/case-tracker-pipeline";
 import {
   fetchCaseTrackerPipelineByCaseIds,
-  fetchCasesWithEvents,
+  fetchCasesList,
+  fetchIncompleteEventsThroughDate,
+  fetchStaleEventsForAutoComplete,
   saveEvent,
   subscribeActivity,
   subscribeCaseEventsFirm,
@@ -21,7 +23,7 @@ import { ACTIVITY_ACTION_LABELS } from "@/lib/activity-labels";
 import { caseMatchesAssignedRole } from "@/lib/case-assigned-filter";
 import { EVENT_KIND_FILTER_OPTIONS } from "@/lib/one-off-events";
 import type { ActivityEntry, CalendarEvent, Case, Contact, EventKind } from "@/lib/types";
-import { deadlineInclusiveEndDate } from "@/lib/event-date-range";
+import { deadlineInclusiveEndDate, shiftCalendarDays } from "@/lib/event-date-range";
 import { AddCalendarEventModal } from "@/components/AddCalendarEventModal";
 import { FilterMultiSelect } from "@/components/FilterMultiSelect";
 import { PageSkeleton } from "@/components/PageSkeleton";
@@ -243,6 +245,7 @@ export default function DashboardPage() {
   const loadInFlightRef = useRef(false);
   const loadQueuedRef = useRef(false);
   const autoCompleteDayRef = useRef<string | null>(null);
+  const lastVisibleFetchRef = useRef(0);
 
   const loadDashboard = useCallback(async () => {
     if (!user || !supabaseReady) return;
@@ -250,44 +253,58 @@ export default function DashboardPage() {
     setLoadError(null);
     try {
       const supabase = getBrowserSupabase();
-      const bundled = await fetchCasesWithEvents(supabase, user.id);
       const t = todayIso();
+      const windowEnd = defaultDashboardEnd(t);
+
       // Once per calendar day per tab — bulk completes fire realtime and would refetch again.
       if (autoCompleteDayRef.current !== t) {
         try {
-          await autoCompleteStaleEvents(
-            supabase,
-            bundled.flatMap((b) => b.events),
-            t
-          );
+          const staleCutoff = shiftCalendarDays(t, -3);
+          const staleCandidates = await fetchStaleEventsForAutoComplete(supabase, staleCutoff);
+          await autoCompleteStaleEvents(supabase, staleCandidates, t);
           autoCompleteDayRef.current = t;
         } catch (e) {
           console.warn("[dashboard] autoCompleteStaleEvents", e);
         }
       }
+
+      const [cases, openEvents] = await Promise.all([
+        fetchCasesList(supabase, user.id),
+        fetchIncompleteEventsThroughDate(supabase, windowEnd),
+      ]);
+
       let pipelineByCaseId = new Map<string, CaseTrackerPipeline>();
       try {
         pipelineByCaseId = await fetchCaseTrackerPipelineByCaseIds(
           supabase,
-          bundled.map((b) => b.case.id)
+          cases.map((c) => c.id)
         );
       } catch (e) {
         console.warn("[dashboard] fetchCaseTrackerPipeline", e);
       }
+
+      const caseById = new Map(cases.map((c) => [c.id, c]));
       const flat: Row[] = [];
       const activeList: Case[] = [];
       let activeCases = 0;
       let totalDeadlines = 0;
-      for (const { case: c, events } of bundled) {
+      const activeCaseIds = new Set<string>();
+
+      for (const c of cases) {
         if (!isTrackerPipelineActive(pipelineByCaseId.get(c.id))) continue;
         activeCases++;
         activeList.push(c);
-        for (const e of events) {
-          if (e.completed) continue;
-          totalDeadlines++;
-          if (dashboardUrgency(e, t)) flat.push({ case: c, event: e });
-        }
+        activeCaseIds.add(c.id);
       }
+
+      for (const e of openEvents) {
+        if (!activeCaseIds.has(e.caseId)) continue;
+        const c = caseById.get(e.caseId);
+        if (!c) continue;
+        totalDeadlines++;
+        if (dashboardUrgency(e, t)) flat.push({ case: c, event: e });
+      }
+
       flat.sort((a, b) => a.event.date.localeCompare(b.event.date));
       activeList.sort((a, b) => a.name.localeCompare(b.name));
       setRows(flat);
@@ -349,7 +366,12 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!supabaseReady || loading || !user) return;
     const onVisible = () => {
-      if (document.visibilityState === "visible") requestLoadDashboard();
+      if (document.visibilityState !== "visible") return;
+      const now = Date.now();
+      // Avoid slamming PostgREST when switching tabs frequently.
+      if (now - lastVisibleFetchRef.current < 30_000) return;
+      lastVisibleFetchRef.current = now;
+      requestLoadDashboard();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);

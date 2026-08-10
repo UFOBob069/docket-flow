@@ -161,6 +161,8 @@ export function intakePrefillForPromote(intake: IntakeFlat) {
     clientFirstName: first,
     clientLastName: last,
     clientPhone: intake.phone ?? "",
+    clientEmail: intake.email?.trim() ?? "",
+    clientStreetAddress: intake.address?.trim() ?? "",
     dateOfBirth: dob ?? "",
     dateOfIncident: doi ?? "",
     notes: intake.notes?.trim() ?? "",

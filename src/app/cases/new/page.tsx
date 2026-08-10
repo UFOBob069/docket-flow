@@ -48,6 +48,12 @@ export default function NewCasePage() {
   const [clientLastName, setClientLastName] = useState("");
   const [clientAlreadyInQuo, setClientAlreadyInQuo] = useState<"" | "yes" | "no">("");
   const [clientPhone, setClientPhone] = useState("");
+  const [clientEmail, setClientEmail] = useState("");
+  const [clientStreetAddress, setClientStreetAddress] = useState("");
+  const [clientCity, setClientCity] = useState("");
+  const [clientState, setClientState] = useState("");
+  const [clientZip, setClientZip] = useState("");
+  const [clientCountry, setClientCountry] = useState("");
   const [dateOfBirth, setDateOfBirth] = useState("");
   const [dateOfIncident, setDateOfIncident] = useState("");
   const [attorneyId, setAttorneyId] = useState("");
@@ -231,6 +237,12 @@ export default function NewCasePage() {
         clientFirstName: first,
         clientLastName: last,
         clientPhone: phoneE164,
+        clientEmail: clientEmail.trim() || null,
+        clientStreetAddress: clientStreetAddress.trim() || null,
+        clientCity: clientCity.trim() || null,
+        clientState: clientState.trim() || null,
+        clientZip: clientZip.trim() || null,
+        clientCountry: clientCountry.trim() || null,
         caseNumber: cn,
         causeNumber: cn,
         dateOfBirth: dob,
@@ -485,6 +497,73 @@ export default function NewCasePage() {
                 </p>
               </div>
             )}
+            <div>
+              <Label>Client email</Label>
+              <Input
+                className="mt-1.5"
+                type="email"
+                autoComplete="email"
+                value={clientEmail}
+                onChange={(e) => setClientEmail(e.target.value)}
+                placeholder="client@example.com"
+              />
+            </div>
+            <fieldset className="space-y-3 rounded-lg border border-border px-3 py-3">
+              <legend className="px-1 text-sm font-medium text-text">Mailing address</legend>
+              <div>
+                <Label>Street address</Label>
+                <Input
+                  className="mt-1.5"
+                  autoComplete="street-address"
+                  value={clientStreetAddress}
+                  onChange={(e) => setClientStreetAddress(e.target.value)}
+                  placeholder="123 Main St"
+                />
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <Label>City</Label>
+                  <Input
+                    className="mt-1.5"
+                    autoComplete="address-level2"
+                    value={clientCity}
+                    onChange={(e) => setClientCity(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label>State</Label>
+                  <Input
+                    className="mt-1.5"
+                    autoComplete="address-level1"
+                    value={clientState}
+                    onChange={(e) => setClientState(e.target.value)}
+                    placeholder="TX"
+                  />
+                </div>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <Label>ZIP code</Label>
+                  <Input
+                    className="mt-1.5"
+                    autoComplete="postal-code"
+                    value={clientZip}
+                    onChange={(e) => setClientZip(e.target.value)}
+                    placeholder="75001"
+                  />
+                </div>
+                <div>
+                  <Label>Country</Label>
+                  <Input
+                    className="mt-1.5"
+                    autoComplete="country-name"
+                    value={clientCountry}
+                    onChange={(e) => setClientCountry(e.target.value)}
+                    placeholder="United States"
+                  />
+                </div>
+              </div>
+            </fieldset>
             <div>
               <Label required>Primary language</Label>
               <Select
