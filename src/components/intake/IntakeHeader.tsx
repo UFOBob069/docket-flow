@@ -119,9 +119,14 @@ export function IntakeHeader({ intake, callId }: Props) {
                 Open in Quo
               </a>
             )}
-            <Button size="sm" variant="secondary" disabled={pdfBusy} onClick={() => void createPdf()}>
+            <button
+              type="button"
+              disabled={pdfBusy}
+              onClick={() => void createPdf()}
+              className="inline-flex items-center justify-center rounded-lg bg-[#E53935] px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[#C62828] disabled:cursor-not-allowed disabled:opacity-60"
+            >
               {pdfBusy ? "Creating PDF…" : "Create PDF"}
-            </Button>
+            </button>
             <div className="relative" ref={menuRef}>
               <Button
                 size="sm"
