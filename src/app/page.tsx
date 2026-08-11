@@ -15,7 +15,6 @@ import {
   fetchStaleEventsForAutoComplete,
   saveEvent,
   subscribeActivity,
-  subscribeCaseEventsFirm,
   subscribeContacts,
 } from "@/lib/supabase/repo";
 import { autoCompleteStaleEvents } from "@/lib/auto-complete-stale-events";
@@ -357,19 +356,11 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!supabaseReady || loading || !user) return;
-    const supabase = getBrowserSupabase();
-    return subscribeCaseEventsFirm(supabase, user.id, () => {
-      requestLoadDashboard();
-    });
-  }, [user, loading, supabaseReady, requestLoadDashboard]);
-
-  useEffect(() => {
-    if (!supabaseReady || loading || !user) return;
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
       const now = Date.now();
       // Avoid slamming PostgREST when switching tabs frequently.
-      if (now - lastVisibleFetchRef.current < 30_000) return;
+      if (now - lastVisibleFetchRef.current < 45_000) return;
       lastVisibleFetchRef.current = now;
       requestLoadDashboard();
     };

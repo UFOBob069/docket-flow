@@ -16,7 +16,7 @@ import {
   type GapSyncProgress,
   type UnsyncedEventRow,
 } from "@/lib/calendar-gap-sync";
-import { fetchCasesWithEvents, subscribeContacts } from "@/lib/supabase/repo";
+import { fetchUnsyncedForwardEvents, subscribeContacts } from "@/lib/supabase/repo";
 import type { CalendarEvent, Case, Contact } from "@/lib/types";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { useHydrated } from "@/hooks/useHydrated";
@@ -66,7 +66,7 @@ export default function MissingCalendarSyncPage() {
     setLoadError(null);
     try {
       const supabase = getBrowserSupabase();
-      const bundled = await fetchCasesWithEvents(supabase, user.id);
+      const bundled = await fetchUnsyncedForwardEvents(supabase, todayYmd());
       setRows(listUnsyncedEvents(bundled, { forwardOnly: true, todayYmd: todayYmd() }));
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load events");

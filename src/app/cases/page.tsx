@@ -21,7 +21,6 @@ import {
   fetchCaseTrackerPipelineByCaseIds,
   fetchCasesList,
   fetchLeanEventsForCaseFilters,
-  subscribeCaseEventsFirm,
   subscribeCases,
   subscribeContacts,
   type CaseEventListStats,
@@ -220,12 +219,12 @@ export default function CasesListPage() {
     if (!supabaseReady || loading || !user) return;
     const supabase = getBrowserSupabase();
     requestLoadBundled();
+    // Refresh on case row changes only — not on every firm-wide case_events write
+    // (that path was flooding PostgREST while clicking around).
     const unsubCases = subscribeCases(supabase, user.id, requestLoadBundled);
-    const unsubEvents = subscribeCaseEventsFirm(supabase, user.id, requestLoadBundled);
     const unsubContacts = subscribeContacts(supabase, user.id, setContacts);
     return () => {
       unsubCases();
-      unsubEvents();
       unsubContacts();
     };
   }, [user, loading, supabaseReady, requestLoadBundled]);
@@ -245,7 +244,7 @@ export default function CasesListPage() {
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
       const now = Date.now();
-      if (now - lastVisibleFetchRef.current < 30_000) return;
+      if (now - lastVisibleFetchRef.current < 45_000) return;
       lastVisibleFetchRef.current = now;
       requestLoadBundled();
     };

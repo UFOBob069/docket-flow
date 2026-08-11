@@ -382,7 +382,30 @@ const CASE_IDS_IN_CHUNK = 40;
 const POSTGREST_PAGE_SIZE = 1000;
 
 /** Coalesce realtime-driven full-list refetches. */
-const REALTIME_REFETCH_DEBOUNCE_MS = 4000;
+const REALTIME_REFETCH_DEBOUNCE_MS = 8000;
+
+/** Short in-memory cache so Dashboard → Cases → Calendar click-around doesn't re-hit PostgREST. */
+const LIST_CACHE_TTL_MS = 25_000;
+
+type Cached<T> = { at: number; value: T };
+let casesListCache: Cached<Case[]> | null = null;
+let pipelineCache: Cached<Map<string, CaseTrackerPipeline>> | null = null;
+
+function cacheGet<T>(entry: Cached<T> | null): T | null {
+  if (!entry) return null;
+  if (Date.now() - entry.at > LIST_CACHE_TTL_MS) return null;
+  return entry.value;
+}
+
+function cacheSet<T>(value: T): Cached<T> {
+  return { at: Date.now(), value };
+}
+
+/** Drop list caches after writes that change cases / pipeline shape. */
+export function invalidateFirmListCaches(): void {
+  casesListCache = null;
+  pipelineCache = null;
+}
 
 /** Lean case columns for list/dashboard (skip unused bulk when possible). */
 const CASE_LIST_COLUMNS = [
@@ -524,13 +547,20 @@ async function fetchAllFirmCaseEventRows(
 /** Lean cases for dashboard / cases list — avoids select * on every refresh. */
 export async function fetchCasesList(
   supabase: SupabaseClient,
-  _userId: string
+  _userId: string,
+  opts?: { bypassCache?: boolean }
 ): Promise<Case[]> {
+  if (!opts?.bypassCache) {
+    const hit = cacheGet(casesListCache);
+    if (hit) return hit;
+  }
   const rows = await fetchAllPagedRows(supabase, "cases", CASE_LIST_COLUMNS, {
     column: "updated_at",
     ascending: false,
   });
-  return rows.map((r) => caseFromRow(r));
+  const cases = rows.map((r) => caseFromRow(r));
+  casesListCache = cacheSet(cases);
+  return cases;
 }
 
 /**
@@ -656,44 +686,69 @@ export async function fetchCasesWithEvents(
 
 /**
  * Tracker stage + disbursement for pipeline active/closed filters (Case Tracker tables).
- * Loads firm-wide in 1–2 paged queries (no giant `in(case_id)` URL) then filters to `caseIds`.
+ * Firm-wide lists use a single RPC instead of paging whole tracker tables through PostgREST.
  */
 export async function fetchCaseTrackerPipelineByCaseIds(
   supabase: SupabaseClient,
-  caseIds: string[]
+  caseIds: string[],
+  opts?: { bypassCache?: boolean }
 ): Promise<Map<string, CaseTrackerPipeline>> {
   const out = new Map<string, CaseTrackerPipeline>();
   if (!caseIds.length) return out;
 
   const wanted = new Set(caseIds);
-  // Small ID sets (e.g. one case) keep the targeted path; firm lists use full-table pages.
-  if (caseIds.length <= CASE_IDS_IN_CHUNK) {
-    const [entriesRes, resultsRes] = await Promise.all([
-      fetchAllRowsForCaseIdIn(supabase, "case_tracker_entries", "case_id, case_stage", caseIds),
-      fetchAllRowsForCaseIdIn(
-        supabase,
-        "case_tracker_results",
-        "case_id, disbursed_status, check_disbursed_at",
-        caseIds
-      ),
-    ]);
-    mergePipelineRows(out, entriesRes, resultsRes);
+
+  // Firm list path — one SQL join, then filter to requested ids.
+  if (caseIds.length > CASE_IDS_IN_CHUNK) {
+    if (!opts?.bypassCache) {
+      const hit = cacheGet(pipelineCache);
+      if (hit) {
+        for (const id of caseIds) {
+          const row = hit.get(id);
+          if (row) out.set(id, row);
+        }
+        return out;
+      }
+    }
+    const { data, error } = await supabase.rpc("case_tracker_pipeline_stats");
+    if (error) throw error;
+    const firm = new Map<string, CaseTrackerPipeline>();
+    for (const row of (data ?? []) as Array<{
+      case_id: string;
+      case_stage: string | null;
+      disbursed_status: string | null;
+      check_disbursed_at: string | null;
+    }>) {
+      const id = String(row.case_id);
+      firm.set(id, {
+        caseStage: row.case_stage ?? null,
+        disbursedStatus: row.disbursed_status ?? null,
+        checkDisbursedAt: row.check_disbursed_at ?? null,
+      });
+    }
+    pipelineCache = cacheSet(firm);
+    for (const id of caseIds) {
+      const row = firm.get(id);
+      if (row) out.set(id, row);
+    }
     return out;
   }
 
   const [entriesRes, resultsRes] = await Promise.all([
-    fetchAllPagedRows(supabase, "case_tracker_entries", "case_id, case_stage"),
-    fetchAllPagedRows(
+    fetchAllRowsForCaseIdIn(supabase, "case_tracker_entries", "case_id, case_stage", caseIds),
+    fetchAllRowsForCaseIdIn(
       supabase,
       "case_tracker_results",
-      "case_id, disbursed_status, check_disbursed_at"
+      "case_id, disbursed_status, check_disbursed_at",
+      caseIds
     ),
   ]);
-  mergePipelineRows(
-    out,
-    entriesRes.filter((r) => wanted.has(String((r as { case_id: string }).case_id))),
-    resultsRes.filter((r) => wanted.has(String((r as { case_id: string }).case_id)))
-  );
+  mergePipelineRows(out, entriesRes, resultsRes);
+  for (const id of wanted) {
+    if (!out.has(id)) {
+      // keep map only for rows that exist; missing = undefined at call sites
+    }
+  }
   return out;
 }
 
@@ -799,19 +854,20 @@ export async function fetchEventsForCase(
   supabase: SupabaseClient,
   caseId: string
 ): Promise<CalendarEvent[]> {
+  const columns = `${FIRM_EVENT_LIST_COLUMNS},description,reminders_minutes,google_host_calendar_id,google_calendar_event_ids_by_email,zoom_link,external_attendees_text,extra_internal_contact_ids`;
   const acc: CalendarEvent[] = [];
   let from = 0;
   for (;;) {
     const { data, error } = await supabase
       .from("case_events")
-      .select("*")
+      .select(columns)
       .eq("case_id", caseId)
       .order("date", { ascending: true })
       .order("id", { ascending: true })
       .range(from, from + POSTGREST_PAGE_SIZE - 1);
     if (error) throw error;
-    const page = data ?? [];
-    for (const r of page) acc.push(eventFromRow(r as Record<string, unknown>));
+    const page = (data ?? []) as unknown as Record<string, unknown>[];
+    for (const r of page) acc.push(eventFromRow(r));
     if (page.length < POSTGREST_PAGE_SIZE) break;
     from += POSTGREST_PAGE_SIZE;
   }
@@ -843,7 +899,7 @@ export async function fetchEventsInDateRange(
   startDate: string,
   endDate: string
 ): Promise<EventWithCaseRow[]> {
-  const select = "*, cases (id, name, client_name, assigned_contact_ids, status)";
+  const select = `${FIRM_EVENT_LIST_COLUMNS},cases (id, name, client_name, assigned_contact_ids, status)`;
   const seen = new Set<string>();
   const acc: EventWithCaseRow[] = [];
 
@@ -879,7 +935,7 @@ export async function fetchEventsInDateRange(
         .order("id", { ascending: true })
         .range(from, from + POSTGREST_PAGE_SIZE - 1);
       if (error) throw error;
-      const page = (data ?? []) as Record<string, unknown>[];
+      const page = (data ?? []) as unknown as Record<string, unknown>[];
       pushPage(page);
       if (page.length < POSTGREST_PAGE_SIZE) break;
       from += POSTGREST_PAGE_SIZE;
@@ -892,6 +948,86 @@ export async function fetchEventsInDateRange(
     return a.event.id.localeCompare(b.event.id);
   });
   return acc;
+}
+
+/**
+ * Incomplete/included events from today forward that lack Google sync ids.
+ * Used by missing-sync instead of loading the full firm event history.
+ */
+export async function fetchUnsyncedForwardEvents(
+  supabase: SupabaseClient,
+  todayYmd: string
+): Promise<{ case: Case; events: CalendarEvent[] }[]> {
+  const today = todayYmd.trim().slice(0, 10);
+  const cases = await fetchCasesList(supabase, "");
+  const caseById = new Map(cases.map((c) => [c.id, c]));
+  const columns = `${FIRM_EVENT_LIST_COLUMNS},description,google_host_calendar_id,google_calendar_event_ids_by_email`;
+  const byCase = new Map<string, CalendarEvent[]>();
+
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from("case_events")
+      .select(columns)
+      .eq("completed", false)
+      .eq("included", true)
+      .gte("date", today)
+      .order("date", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + POSTGREST_PAGE_SIZE - 1);
+    if (error) throw error;
+    const page = (data ?? []) as unknown as Record<string, unknown>[];
+    for (const r of page) {
+      const ev = eventFromRow(r);
+      if (ev.calendarOrigin === "google_ics_mirror") continue;
+      if (ev.googleHostCalendarId?.trim() || ev.googleEventId?.trim()) continue;
+      const map = ev.googleCalendarEventIdsByEmail;
+      if (map && Object.keys(map).length > 0) continue;
+      if (!caseById.has(ev.caseId)) continue;
+      const list = byCase.get(ev.caseId);
+      if (list) list.push(ev);
+      else byCase.set(ev.caseId, [ev]);
+    }
+    if (page.length < POSTGREST_PAGE_SIZE) break;
+    from += POSTGREST_PAGE_SIZE;
+  }
+
+  // Multi-day deadlines that started before today but still overlap today+.
+  from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from("case_events")
+      .select(columns)
+      .eq("completed", false)
+      .eq("included", true)
+      .not("deadline_end_date", "is", null)
+      .lt("date", today)
+      .gte("deadline_end_date", today)
+      .order("date", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + POSTGREST_PAGE_SIZE - 1);
+    if (error) throw error;
+    const page = (data ?? []) as unknown as Record<string, unknown>[];
+    for (const r of page) {
+      const ev = eventFromRow(r);
+      if (ev.calendarOrigin === "google_ics_mirror") continue;
+      if (ev.googleHostCalendarId?.trim() || ev.googleEventId?.trim()) continue;
+      const map = ev.googleCalendarEventIdsByEmail;
+      if (map && Object.keys(map).length > 0) continue;
+      if (!caseById.has(ev.caseId)) continue;
+      const list = byCase.get(ev.caseId) ?? [];
+      if (list.some((x) => x.id === ev.id)) continue;
+      list.push(ev);
+      byCase.set(ev.caseId, list);
+    }
+    if (page.length < POSTGREST_PAGE_SIZE) break;
+    from += POSTGREST_PAGE_SIZE;
+  }
+
+  return Array.from(byCase.entries()).map(([caseId, events]) => ({
+    case: caseById.get(caseId)!,
+    events,
+  }));
 }
 
 export function subscribeEvents(
@@ -909,17 +1045,21 @@ export function subscribeEvents(
     }
   };
   void load();
+  const notify = debounceNotify(() => {
+    void load();
+  }, 750);
   const ch = supabase
     .channel(`case_events:${caseId}`)
     .on(
       "postgres_changes",
       { event: "*", schema: "public", table: "case_events", filter: `case_id=eq.${caseId}` },
       () => {
-        void load();
+        notify();
       }
     )
     .subscribe();
   return () => {
+    notify.cancel();
     void supabase.removeChannel(ch);
   };
 }
@@ -991,6 +1131,7 @@ export async function createCase(
   });
   const { data, error } = await supabase.from("cases").insert(row).select("id").single();
   if (error) throw error;
+  invalidateFirmListCaches();
   return data.id as string;
 }
 
@@ -1062,6 +1203,7 @@ export async function updateCase(
     row.event_attorney_contact_id = patch.eventAttorneyContactId?.trim() || null;
   const { error } = await supabase.from("cases").update(row).eq("id", caseId);
   if (error) throw error;
+  invalidateFirmListCaches();
 }
 
 export async function deleteCaseCascade(
