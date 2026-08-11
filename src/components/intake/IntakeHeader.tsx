@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import type { IntakeFlat } from "@/lib/intake-types";
 import { formatIntakeWhen } from "@/lib/intake-detail";
+import { downloadIntakePdf } from "@/lib/intake-pdf";
 import { Badge, Button } from "@/components/ui";
 
 type Props = {
@@ -14,6 +15,7 @@ type Props = {
 export function IntakeHeader({ intake, callId }: Props) {
   const promoted = Boolean(intake.case_id);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -39,6 +41,18 @@ export function IntakeHeader({ intake, callId }: Props) {
       window.alert(`${label} copied`);
     } catch {
       window.alert(`Could not copy ${label.toLowerCase()}`);
+    }
+  }
+
+  async function createPdf() {
+    if (pdfBusy) return;
+    setPdfBusy(true);
+    try {
+      await downloadIntakePdf(intake, window.location.href);
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "Could not create PDF");
+    } finally {
+      setPdfBusy(false);
     }
   }
 
@@ -105,6 +119,9 @@ export function IntakeHeader({ intake, callId }: Props) {
                 Open in Quo
               </a>
             )}
+            <Button size="sm" variant="secondary" disabled={pdfBusy} onClick={() => void createPdf()}>
+              {pdfBusy ? "Creating PDF…" : "Create PDF"}
+            </Button>
             <div className="relative" ref={menuRef}>
               <Button
                 size="sm"
