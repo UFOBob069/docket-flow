@@ -169,25 +169,38 @@ export async function POST(req: Request): Promise<Response> {
         if (body.sourceLabel) {
           description = `Source: ${body.sourceLabel}\n\n${description}`;
         }
-        const r = await reconcileCalendarEventTeam({
-          summary,
-          description,
-          dateIso: ev.date,
-          reminderMinutes: ev.reminderMinutes ?? [20160, 10080, 1440],
-          startDateTime: ev.startDateTime,
-          endDateTime: ev.endDateTime,
-          deadlineEndDate: ev.deadlineEndDate,
-          location: ev.location,
-          googleColorId: ev.googleColorId,
-          attendeeEmails,
-          idsByEmail: ev.googleCalendarEventIdsByEmail,
-          googleEventId: ev.googleEventId,
-          scheduleKind: ev.scheduleKind,
-        });
-        results.push({
-          organizerEventId: r.organizerEventId,
-          idsByEmail: r.idsByEmail,
-        });
+        try {
+          const r = await reconcileCalendarEventTeam({
+            summary,
+            description,
+            dateIso: ev.date,
+            reminderMinutes: ev.reminderMinutes ?? [20160, 10080, 1440],
+            startDateTime: ev.startDateTime,
+            endDateTime: ev.endDateTime,
+            deadlineEndDate: ev.deadlineEndDate,
+            location: ev.location,
+            googleColorId: ev.googleColorId,
+            attendeeEmails,
+            idsByEmail: ev.googleCalendarEventIdsByEmail,
+            googleEventId: ev.googleEventId,
+            scheduleKind: ev.scheduleKind,
+          });
+          results.push({
+            organizerEventId: r.organizerEventId,
+            idsByEmail: r.idsByEmail,
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error("[calendar/sync] reconcile_team event failed", ev.title, message, err);
+          results.push({ organizerEventId: "", idsByEmail: {} });
+        }
+      }
+      const failed = results.filter((r) => !r.organizerEventId).length;
+      if (failed > 0 && failed === results.length) {
+        return NextResponse.json(
+          { error: "Google Calendar event not found", results },
+          { status: 400 }
+        );
       }
       return NextResponse.json({ results });
     }

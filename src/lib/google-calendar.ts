@@ -642,20 +642,40 @@ export async function reconcileCalendarEventTeam(params: {
         )
       );
       const organizer = getMeetingOrganizerEmail();
-      const auth = getAuthForUser(organizer);
-      const calendar = google.calendar({ version: "v3", auth });
-      await calendar.events.patch({
-        calendarId: "primary",
-        eventId: meetingEventId,
-        sendUpdates: "all",
-        requestBody: {
-          attendees: guestEmails.map((email) => ({ email })),
-        },
+      try {
+        await patchCalendarEventForUser(
+          organizer,
+          meetingEventId,
+          { attendees: guestEmails.map((email) => ({ email })) },
+          "all"
+        );
+        return {
+          organizerEventId: meetingEventId,
+          idsByEmail: { [meetingOrgLower]: meetingEventId },
+        };
+      } catch (err) {
+        if (!isGoogleNotFoundError(err)) throw err;
+        console.warn(
+          "[calendar] Meeting event missing on Google; recreating invite",
+          meetingEventId
+        );
+      }
+    }
+
+    if (!legacyMultiCopy) {
+      return insertGoogleEvent({
+        summary: params.summary,
+        description: params.description,
+        dateIso: params.dateIso,
+        attendeeEmails: params.attendeeEmails,
+        reminderMinutes: params.reminderMinutes,
+        startDateTime: params.startDateTime ?? null,
+        endDateTime: params.endDateTime ?? null,
+        deadlineEndDate: params.deadlineEndDate ?? null,
+        location: params.location,
+        scheduleKind: "meeting",
+        googleColorId: params.googleColorId,
       });
-      return {
-        organizerEventId: meetingEventId,
-        idsByEmail: { [meetingOrgLower]: meetingEventId },
-      };
     }
   }
 
