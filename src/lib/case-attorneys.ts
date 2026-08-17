@@ -34,24 +34,35 @@ export function inferParalegalContactId(
   return null;
 }
 
+export function inferLegalAssistantContactId(
+  caseRecord: Pick<Case, "assignedContactIds">,
+  contactById: Map<string, Contact>
+): string | null {
+  for (const id of caseRecord.assignedContactIds) {
+    if (contactById.get(id)?.role === "legal_assistant") return id;
+  }
+  return null;
+}
+
 /**
  * Assignees written to `assigned_contact_ids`. Responsible attorney first (Case Tracker sync),
- * then paralegal and non-attorney extras. Event attorney is excluded intentionally.
+ * then paralegal, legal assistant, and non-attorney extras. Event attorney is excluded intentionally.
  */
 export function buildCaseAssignedContactIds(args: {
   responsibleAttorneyId: string;
   paralegalId: string;
+  legalAssistantId?: string;
   extraIds?: string[];
   contactById?: Map<string, Contact>;
 }): string[] {
-  const { responsibleAttorneyId, paralegalId, extraIds = [], contactById } = args;
-  const reserved = new Set([responsibleAttorneyId, paralegalId].filter(Boolean));
+  const { responsibleAttorneyId, paralegalId, legalAssistantId = "", extraIds = [], contactById } = args;
+  const reserved = new Set([responsibleAttorneyId, paralegalId, legalAssistantId].filter(Boolean));
   const extras = extraIds.filter((id) => {
     if (!id?.trim() || reserved.has(id)) return false;
     if (contactById?.get(id)?.role === "attorney") return false;
     return true;
   });
-  return [...new Set([responsibleAttorneyId, paralegalId, ...extras].filter(Boolean))];
+  return [...new Set([responsibleAttorneyId, paralegalId, legalAssistantId, ...extras].filter(Boolean))];
 }
 
 /** Contact ids for Google calendar invites (assignees + optional event attorney + event extras). */
@@ -76,6 +87,7 @@ export type CaseContactSlots = {
   responsibleAttorneyId: string;
   eventAttorneyId: string;
   paralegalId: string;
+  legalAssistantId: string;
   extraIds: string[];
 };
 
@@ -86,9 +98,10 @@ export function caseContactSlotsFromCase(
   const responsibleAttorneyId = inferResponsibleAttorneyContactId(caseRecord, contactById) ?? "";
   const eventAttorneyId = caseRecord.eventAttorneyContactId?.trim() ?? "";
   const paralegalId = inferParalegalContactId(caseRecord, contactById) ?? "";
-  const reserved = new Set([responsibleAttorneyId, paralegalId].filter(Boolean));
+  const legalAssistantId = inferLegalAssistantContactId(caseRecord, contactById) ?? "";
+  const reserved = new Set([responsibleAttorneyId, paralegalId, legalAssistantId].filter(Boolean));
   const extraIds = caseRecord.assignedContactIds.filter((id) => !reserved.has(id));
-  return { responsibleAttorneyId, eventAttorneyId, paralegalId, extraIds };
+  return { responsibleAttorneyId, eventAttorneyId, paralegalId, legalAssistantId, extraIds };
 }
 
 export function caseContactDisplayLabel(

@@ -98,6 +98,7 @@ export type IntakePromoteBody = {
   caseNumber: string;
   responsibleAttorneyContactId: string;
   paralegalContactId: string;
+  legalAssistantContactId?: string | null;
   eventAttorneyContactId?: string | null;
   extraAssigneeIds?: string[];
   preferredLanguage: string;

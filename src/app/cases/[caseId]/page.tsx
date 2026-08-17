@@ -252,6 +252,7 @@ export default function CaseDetailPage() {
   const [reassignMainAttorneyId, setReassignMainAttorneyId] = useState("");
   const [reassignEventAttorneyId, setReassignEventAttorneyId] = useState("");
   const [reassignParalegalId, setReassignParalegalId] = useState("");
+  const [reassignLegalAssistantId, setReassignLegalAssistantId] = useState("");
   const [reassignExtraIds, setReassignExtraIds] = useState<string[]>([]);
   const [editPreferredLanguage, setEditPreferredLanguage] = useState("");
   const [editSecondaryLanguage, setEditSecondaryLanguage] = useState("");
@@ -285,6 +286,13 @@ export default function CaseDetailPage() {
   );
   const paralegals = useMemo(
     () => contacts.filter((ct) => ct.role === "paralegal").sort((a, b) => a.name.localeCompare(b.name)),
+    [contacts]
+  );
+  const legalAssistants = useMemo(
+    () =>
+      contacts
+        .filter((ct) => ct.role === "legal_assistant")
+        .sort((a, b) => a.name.localeCompare(b.name)),
     [contacts]
   );
 
@@ -997,6 +1005,13 @@ export default function CaseDetailPage() {
       setMsg("Event attorney must be different from the main attorney.");
       return;
     }
+    if (reassignLegalAssistantId) {
+      const la = contacts.find((ct) => ct.id === reassignLegalAssistantId);
+      if (!la?.email) {
+        setMsg("Selected legal assistant must have the email/ID field filled on their contact.");
+        return;
+      }
+    }
     setBusy(true); setMsg(null);
     try {
       const supabase = getBrowserSupabase();
@@ -1004,11 +1019,13 @@ export default function CaseDetailPage() {
         (id) =>
           id &&
           id !== reassignMainAttorneyId &&
-          id !== reassignParalegalId
+          id !== reassignParalegalId &&
+          id !== reassignLegalAssistantId
       );
       const newContactIds = buildCaseAssignedContactIds({
         responsibleAttorneyId: reassignMainAttorneyId,
         paralegalId: reassignParalegalId,
+        legalAssistantId: reassignLegalAssistantId,
         extraIds,
         contactById,
       });
@@ -1452,6 +1469,7 @@ export default function CaseDetailPage() {
                 setReassignMainAttorneyId(slots.responsibleAttorneyId);
                 setReassignEventAttorneyId(slots.eventAttorneyId);
                 setReassignParalegalId(slots.paralegalId);
+                setReassignLegalAssistantId(slots.legalAssistantId);
                 setReassignExtraIds(slots.extraIds);
                 setShowReassign(true);
               }}
@@ -1539,6 +1557,22 @@ export default function CaseDetailPage() {
                 </Select>
               </div>
               <div>
+                <Label>Legal assistant</Label>
+                <Select
+                  className="mt-1.5"
+                  value={reassignLegalAssistantId}
+                  onChange={(e) => setReassignLegalAssistantId(e.target.value)}
+                >
+                  <option value="">None</option>
+                  {legalAssistants.map((ct) => (
+                    <option key={ct.id} value={ct.id}>{ct.name}</option>
+                  ))}
+                </Select>
+                <p className="mt-1 text-xs text-text-muted">
+                  Optional — included on the case team and calendar invites.
+                </p>
+              </div>
+              <div>
                 <Label>Additional people</Label>
                 <div className="mt-2 space-y-2">
                   {reassignExtraIds.map((rid, i) => (
@@ -1558,6 +1592,7 @@ export default function CaseDetailPage() {
                             (ct) =>
                               ct.id !== reassignMainAttorneyId &&
                               ct.id !== reassignParalegalId &&
+                              ct.id !== reassignLegalAssistantId &&
                               ct.role !== "attorney"
                           )
                           .map((ct) => (

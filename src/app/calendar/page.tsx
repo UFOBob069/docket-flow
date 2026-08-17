@@ -111,6 +111,7 @@ export default function CalendarPage() {
   const [search, setSearch] = useState("");
   const [attorneyFilterIds, setAttorneyFilterIds] = useState<string[]>([]);
   const [paralegalFilterIds, setParalegalFilterIds] = useState<string[]>([]);
+  const [legalAssistantFilterIds, setLegalAssistantFilterIds] = useState<string[]>([]);
   const [eventKindFilters, setEventKindFilters] = useState<EventKind[]>([]);
   const [showFiltersDrawer, setShowFiltersDrawer] = useState(false);
   const [showDateModal, setShowDateModal] = useState(false);
@@ -191,6 +192,10 @@ export default function CalendarPage() {
 
   const attorneys = useMemo(() => contacts.filter((c) => c.role === "attorney"), [contacts]);
   const paralegals = useMemo(() => contacts.filter((c) => c.role === "paralegal"), [contacts]);
+  const legalAssistants = useMemo(
+    () => contacts.filter((c) => c.role === "legal_assistant"),
+    [contacts]
+  );
 
   const eventKindCheckboxOptions = useMemo(
     () =>
@@ -214,6 +219,8 @@ export default function CalendarPage() {
       if (!e.included || e.noiseFlag || e.completed) return false;
       if (!caseMatchesAssignedRole(c, attorneyFilterIds, "attorney", contactById)) return false;
       if (!caseMatchesAssignedRole(c, paralegalFilterIds, "paralegal", contactById)) return false;
+      if (!caseMatchesAssignedRole(c, legalAssistantFilterIds, "legal_assistant", contactById))
+        return false;
       if (
         eventKindFilters.length &&
         !eventKindFilters.includes((e.eventKind ?? "other_event") as EventKind)
@@ -235,11 +242,12 @@ export default function CalendarPage() {
     });
     list.sort((a, b) => compareEventsBySchedule(a.event, b.event));
     return list;
-  }, [rows, search, attorneyFilterIds, paralegalFilterIds, eventKindFilters, contactById]);
+  }, [rows, search, attorneyFilterIds, paralegalFilterIds, legalAssistantFilterIds, eventKindFilters, contactById]);
 
   const activeFilterCount =
     (attorneyFilterIds.length ? 1 : 0) +
     (paralegalFilterIds.length ? 1 : 0) +
+    (legalAssistantFilterIds.length ? 1 : 0) +
     (eventKindFilters.length ? 1 : 0) +
     (hasCustomDateRange ? 1 : 0);
 
@@ -251,10 +259,15 @@ export default function CalendarPage() {
     () => paralegals.map((c) => ({ id: c.id, label: c.name })),
     [paralegals]
   );
+  const legalAssistantOptions = useMemo(
+    () => legalAssistants.map((c) => ({ id: c.id, label: c.name })),
+    [legalAssistants]
+  );
 
   function clearAllFilters() {
     setAttorneyFilterIds([]);
     setParalegalFilterIds([]);
+    setLegalAssistantFilterIds([]);
     setEventKindFilters([]);
     resetTimelineToDefault();
   }
@@ -370,6 +383,7 @@ export default function CalendarPage() {
       {Boolean(
         attorneyFilterIds.length ||
           paralegalFilterIds.length ||
+          legalAssistantFilterIds.length ||
           eventKindFilters.length ||
           hasCustomDateRange
       ) && (
@@ -389,6 +403,16 @@ export default function CalendarPage() {
               key={`par-${id}`}
               type="button"
               onClick={() => setParalegalFilterIds((prev) => prev.filter((x) => x !== id))}
+              className="rounded-full bg-surface-alt px-2.5 py-1 text-xs text-text"
+            >
+              {(contactById.get(id)?.name ?? id)} ×
+            </button>
+          ))}
+          {legalAssistantFilterIds.map((id) => (
+            <button
+              key={`la-${id}`}
+              type="button"
+              onClick={() => setLegalAssistantFilterIds((prev) => prev.filter((x) => x !== id))}
               className="rounded-full bg-surface-alt px-2.5 py-1 text-xs text-text"
             >
               {(contactById.get(id)?.name ?? id)} ×
@@ -524,6 +548,13 @@ export default function CalendarPage() {
               selectedIds={paralegalFilterIds}
               onChange={setParalegalFilterIds}
               placeholder="Select paralegals"
+            />
+            <FilterMultiSelect
+              label="Legal assistants"
+              options={legalAssistantOptions}
+              selectedIds={legalAssistantFilterIds}
+              onChange={setLegalAssistantFilterIds}
+              placeholder="Select legal assistants"
             />
             <FilterMultiSelect
               label="Event types"

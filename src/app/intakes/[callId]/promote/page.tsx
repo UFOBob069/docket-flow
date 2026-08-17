@@ -66,6 +66,7 @@ export default function PromoteIntakePage() {
   const [attorneyId, setAttorneyId] = useState("");
   const [eventAttorneyId, setEventAttorneyId] = useState("");
   const [paralegalId, setParalegalId] = useState("");
+  const [legalAssistantId, setLegalAssistantId] = useState("");
   const [solDate, setSolDate] = useState("");
   const [solRemindersMinutes, setSolRemindersMinutes] = useState<number[]>(() => [
     ...DEFAULT_REMINDERS.other,
@@ -121,6 +122,10 @@ export default function PromoteIntakePage() {
 
   const attorneys = useMemo(() => contacts.filter((c) => c.role === "attorney"), [contacts]);
   const paralegals = useMemo(() => contacts.filter((c) => c.role === "paralegal"), [contacts]);
+  const legalAssistants = useMemo(
+    () => contacts.filter((c) => c.role === "legal_assistant"),
+    [contacts]
+  );
 
   const solMilestonePreview = useMemo(() => {
     const doi = dateOfIncident.trim();
@@ -153,6 +158,7 @@ export default function PromoteIntakePage() {
       caseNumber: cn,
       responsibleAttorneyContactId: attorneyId,
       paralegalContactId: paralegalId,
+      legalAssistantContactId: legalAssistantId || null,
       eventAttorneyContactId: eventAttorneyId || null,
       preferredLanguage,
       secondaryLanguage: secondaryLanguage || null,
@@ -495,6 +501,21 @@ export default function PromoteIntakePage() {
               <Select className="mt-1.5" value={paralegalId} onChange={(e) => setParalegalId(e.target.value)} required>
                 <option value="">Select…</option>
                 {paralegals.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div>
+              <Label>Legal assistant</Label>
+              <Select
+                className="mt-1.5"
+                value={legalAssistantId}
+                onChange={(e) => setLegalAssistantId(e.target.value)}
+              >
+                <option value="">None</option>
+                {legalAssistants.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>

@@ -115,6 +115,7 @@ export default function CasesListPage() {
   const [search, setSearch] = useState("");
   const [attorneyFilterIds, setAttorneyFilterIds] = useState<string[]>([]);
   const [paralegalFilterIds, setParalegalFilterIds] = useState<string[]>([]);
+  const [legalAssistantFilterIds, setLegalAssistantFilterIds] = useState<string[]>([]);
   const [eventKindFilters, setEventKindFilters] = useState<EventKind[]>([]);
   const [stageFilters, setStageFilters] = useState<string[]>([]);
   const [statusFilter, setStatusFilter] = useState<CaseStatusFilter>("active");
@@ -270,6 +271,13 @@ export default function CasesListPage() {
     () => contacts.filter((ct) => ct.role === "paralegal").sort((a, b) => a.name.localeCompare(b.name)),
     [contacts]
   );
+  const legalAssistants = useMemo(
+    () =>
+      contacts
+        .filter((ct) => ct.role === "legal_assistant")
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [contacts]
+  );
 
   const eventKindCheckboxOptions = useMemo(
     () =>
@@ -287,6 +295,10 @@ export default function CasesListPage() {
   const paralegalOptions = useMemo(
     () => paralegals.map((c) => ({ id: c.id, label: c.name })),
     [paralegals]
+  );
+  const legalAssistantOptions = useMemo(
+    () => legalAssistants.map((c) => ({ id: c.id, label: c.name })),
+    [legalAssistants]
   );
 
   const resetDateFilter = () => {
@@ -311,6 +323,9 @@ export default function CasesListPage() {
     }
     list = list.filter((c) => caseMatchesAssignedRole(c, attorneyFilterIds, "attorney", contactById));
     list = list.filter((c) => caseMatchesAssignedRole(c, paralegalFilterIds, "paralegal", contactById));
+    list = list.filter((c) =>
+      caseMatchesAssignedRole(c, legalAssistantFilterIds, "legal_assistant", contactById)
+    );
     if (eventKindFilters.length && filterEvents) {
       list = list.filter((c) => {
         const evs = eventsByCaseId.get(c.id) ?? [];
@@ -355,6 +370,7 @@ export default function CasesListPage() {
     search,
     attorneyFilterIds,
     paralegalFilterIds,
+    legalAssistantFilterIds,
     eventKindFilters,
     contactById,
     eventsByCaseId,
@@ -378,6 +394,7 @@ export default function CasesListPage() {
     (stageFilters.length ? 1 : 0) +
     (attorneyFilterIds.length ? 1 : 0) +
     (paralegalFilterIds.length ? 1 : 0) +
+    (legalAssistantFilterIds.length ? 1 : 0) +
     (eventKindFilters.length ? 1 : 0) +
     (useEventDateFilter ? 1 : 0);
 
@@ -386,6 +403,7 @@ export default function CasesListPage() {
     setStageFilters([]);
     setAttorneyFilterIds([]);
     setParalegalFilterIds([]);
+    setLegalAssistantFilterIds([]);
     setEventKindFilters([]);
     resetDateFilter();
   }
@@ -397,6 +415,7 @@ export default function CasesListPage() {
       stageFilters.length ||
       attorneyFilterIds.length ||
       paralegalFilterIds.length ||
+      legalAssistantFilterIds.length ||
       search.trim() ||
       eventKindFilters.length ||
       useEventDateFilter
@@ -406,6 +425,7 @@ export default function CasesListPage() {
     stageFilters.length ||
       attorneyFilterIds.length ||
       paralegalFilterIds.length ||
+      legalAssistantFilterIds.length ||
       search.trim() ||
       eventKindFilters.length ||
       useEventDateFilter
@@ -473,6 +493,7 @@ export default function CasesListPage() {
           stageFilters.length ||
           attorneyFilterIds.length ||
           paralegalFilterIds.length ||
+          legalAssistantFilterIds.length ||
           eventKindFilters.length ||
           useEventDateFilter
       ) && (
@@ -511,6 +532,16 @@ export default function CasesListPage() {
               key={`par-${id}`}
               type="button"
               onClick={() => setParalegalFilterIds((prev) => prev.filter((x) => x !== id))}
+              className="rounded-full bg-surface-alt px-2.5 py-1 text-xs text-text"
+            >
+              {(contactById.get(id)?.name ?? id)} ×
+            </button>
+          ))}
+          {legalAssistantFilterIds.map((id) => (
+            <button
+              key={`la-${id}`}
+              type="button"
+              onClick={() => setLegalAssistantFilterIds((prev) => prev.filter((x) => x !== id))}
               className="rounded-full bg-surface-alt px-2.5 py-1 text-xs text-text"
             >
               {(contactById.get(id)?.name ?? id)} ×
@@ -695,6 +726,13 @@ export default function CasesListPage() {
               selectedIds={paralegalFilterIds}
               onChange={setParalegalFilterIds}
               placeholder="Select paralegals"
+            />
+            <FilterMultiSelect
+              label="Legal assistants"
+              options={legalAssistantOptions}
+              selectedIds={legalAssistantFilterIds}
+              onChange={setLegalAssistantFilterIds}
+              placeholder="Select legal assistants"
             />
             <FilterMultiSelect
               label="Event types"

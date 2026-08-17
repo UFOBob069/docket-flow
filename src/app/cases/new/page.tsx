@@ -59,7 +59,8 @@ export default function NewCasePage() {
   const [attorneyId, setAttorneyId] = useState("");
   const [eventAttorneyId, setEventAttorneyId] = useState("");
   const [paralegalId, setParalegalId] = useState("");
-  /** Extra people on the case (beyond required attorney + paralegal) */
+  const [legalAssistantId, setLegalAssistantId] = useState("");
+  /** Extra people on the case (beyond attorney, paralegal, and legal assistant) */
   const [extraAssigneeIds, setExtraAssigneeIds] = useState<string[]>([]);
   const [notes, setNotes] = useState("");
   const [caseType, setCaseType] = useState("");
@@ -194,6 +195,13 @@ export default function NewCasePage() {
       setErr("Selected attorney and paralegal must have the email/ID field filled on their contact (use a real email for Google).");
       return;
     }
+    const legalAssistant = legalAssistantId
+      ? contacts.find((c) => c.id === legalAssistantId)
+      : undefined;
+    if (legalAssistantId && !legalAssistant?.email) {
+      setErr("Selected legal assistant must have the email/ID field filled on their contact (use a real email for Google).");
+      return;
+    }
     if (!isCaseType(caseType)) {
       setErr("Select a case type.");
       return;
@@ -223,11 +231,17 @@ export default function NewCasePage() {
       const displayName = `${cl} (${cn})`;
       const contactById = new Map(contacts.map((ct) => [ct.id, ct]));
       const extraIds = extraAssigneeIds.filter(
-        (id) => id && id !== attorneyId && id !== eventAttorneyId && id !== paralegalId
+        (id) =>
+          id &&
+          id !== attorneyId &&
+          id !== eventAttorneyId &&
+          id !== paralegalId &&
+          id !== legalAssistantId
       );
       const assignedContactIds = buildCaseAssignedContactIds({
         responsibleAttorneyId: attorneyId,
         paralegalId,
+        legalAssistantId,
         extraIds,
         contactById,
       });
@@ -370,6 +384,7 @@ export default function NewCasePage() {
 
   const attorneys = contacts.filter((c) => c.role === "attorney");
   const paralegals = contacts.filter((c) => c.role === "paralegal");
+  const legalAssistants = contacts.filter((c) => c.role === "legal_assistant");
 
   return (
     <PageWrapper className="max-w-[560px]">
@@ -699,6 +714,22 @@ export default function NewCasePage() {
               </Select>
             </div>
             <div>
+              <Label>Legal assistant</Label>
+              <Select
+                className="mt-1.5"
+                value={legalAssistantId}
+                onChange={(e) => setLegalAssistantId(e.target.value)}
+              >
+                <option value="">None</option>
+                {legalAssistants.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </Select>
+              <p className="mt-1 text-xs text-text-muted">
+                Optional — added to the case team and Google Calendar invites.
+              </p>
+            </div>
+            <div>
               <div className="flex items-center justify-between gap-2">
                 <Label>Additional people on this case</Label>
                 <Button
@@ -736,7 +767,8 @@ export default function NewCasePage() {
                           (ct) =>
                             ct.id !== attorneyId &&
                             ct.id !== eventAttorneyId &&
-                            ct.id !== paralegalId
+                            ct.id !== paralegalId &&
+                            ct.id !== legalAssistantId
                         )
                         .map((ct) => (
                           <option key={ct.id} value={ct.id}>

@@ -4,7 +4,7 @@ import type { Contact } from "./types";
 export function caseMatchesAssignedRole(
   c: { assignedContactIds: string[] },
   selectedIds: string[],
-  role: "attorney" | "paralegal",
+  role: "attorney" | "paralegal" | "legal_assistant",
   contactById: Map<string, Contact>
 ): boolean {
   if (!selectedIds.length) return true;

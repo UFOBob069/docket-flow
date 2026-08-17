@@ -90,11 +90,17 @@ export async function executePromoteIntakeToCase(
 
   const contactById = new Map(contacts.map((c) => [c.id, c]));
   const extraIds = (body.extraAssigneeIds ?? []).filter(
-    (id) => id && id !== body.responsibleAttorneyContactId && id !== body.eventAttorneyContactId
+    (id) =>
+      id &&
+      id !== body.responsibleAttorneyContactId &&
+      id !== body.eventAttorneyContactId &&
+      id !== body.paralegalContactId &&
+      id !== body.legalAssistantContactId
   );
   const assignedContactIds = buildCaseAssignedContactIds({
     responsibleAttorneyId: body.responsibleAttorneyContactId,
     paralegalId: body.paralegalContactId,
+    legalAssistantId: body.legalAssistantContactId ?? "",
     extraIds,
     contactById,
   });
