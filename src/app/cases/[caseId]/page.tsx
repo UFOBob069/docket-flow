@@ -907,13 +907,22 @@ export default function CaseDetailPage() {
       }
       const supabase = getBrowserSupabase();
       await bulkDeleteEvents(supabase, caseId, [...selected]);
+      const deletedLines = selectedEvents.map((ev) => `• ${ev.title} (${ev.date})`);
+      const maxListed = 12;
+      const listed = deletedLines.slice(0, maxListed);
+      const remaining = deletedLines.length - listed.length;
+      const description = [
+        `Deleted ${selectedEvents.length} event${selectedEvents.length === 1 ? "" : "s"}:`,
+        ...listed,
+        ...(remaining > 0 ? [`• …and ${remaining} more`] : []),
+      ].join("\n");
       await logActivity(supabase, user.id, {
         caseId, caseName: caseDisplayName(c),
         action: "events_bulk_deleted",
-        description: `Deleted ${selected.size} events`,
+        description,
         userEmail: user.email ?? "",
       });
-      flash(`Deleted ${selected.size} events`);
+      flash(`Deleted ${selectedEvents.length} events`);
       setSelected(new Set());
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "Bulk delete failed");

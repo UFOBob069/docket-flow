@@ -2,9 +2,10 @@
  * OAuth / links: Supabase `redirect_to` must exactly match an entry under
  * Authentication → URL Configuration → Redirect URLs.
  *
- * On Vercel, set `NEXT_PUBLIC_SITE_URL` to your canonical app URL (e.g. https://your-app.vercel.app)
- * so sign-in always requests that callback — otherwise Supabase may fall back to **Site URL**
- * (often still `http://localhost:3000`) and send the browser there after Google.
+ * On Vercel, set `NEXT_PUBLIC_SITE_URL` to your canonical app URL
+ * (e.g. https://rjl-docket-flow.vercel.app) so sign-in and Slack links always use that host —
+ * otherwise Supabase may fall back to **Site URL** (often still `http://localhost:3000`)
+ * and Slack may link to a one-off deployment URL.
  *
  * Leave unset (or use http://localhost:3000) for local `next dev`.
  */
