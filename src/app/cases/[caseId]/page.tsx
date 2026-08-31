@@ -63,6 +63,7 @@ import type {
 } from "@/lib/types";
 import { AddCalendarEventModal } from "@/components/AddCalendarEventModal";
 import { EventAttendeesModal } from "@/components/EventAttendeesModal";
+import { ImportIntakeModal } from "@/components/ImportIntakeModal";
 import {
   FederalHolidayBlockedNotice,
   FederalHolidayDateInput,
@@ -269,6 +270,7 @@ export default function CaseDetailPage() {
   const { holidays } = useFederalHolidays();
 
   const [showAddEvent, setShowAddEvent] = useState(false);
+  const [showImportIntake, setShowImportIntake] = useState(false);
   const [eventViewMode, setEventViewMode] = useState<"timeline" | "month">("timeline");
   const [monthCursor, setMonthCursor] = useState(() => format(new Date(), "yyyy-MM"));
 
@@ -1412,6 +1414,17 @@ export default function CaseDetailPage() {
               Import Document with Dates
             </Link>
           )}
+          {c.status !== "archived" && (
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={busy}
+              title="Link an open intake and fill blank case / Case Tracker fields"
+              onClick={() => setShowImportIntake(true)}
+            >
+              Import from intake
+            </Button>
+          )}
           <Button variant="pink" size="sm" disabled={busy} onClick={() => setShowAddEvent(true)}>
             Add calendar event
           </Button>
@@ -1948,6 +1961,15 @@ export default function CaseDetailPage() {
           idToken={idToken}
           user={{ id: user.id, email: user.email }}
           onSaved={({ title }) => flash(`Added "${title}" to the case and calendar`)}
+        />
+      )}
+
+      {showImportIntake && caseId && (
+        <ImportIntakeModal
+          caseId={caseId}
+          idToken={idToken}
+          onClose={() => setShowImportIntake(false)}
+          onImported={(summary) => flash(summary)}
         />
       )}
 

@@ -11,4 +11,5 @@ export const ACTIVITY_ACTION_LABELS: Record<ActivityAction, string> = {
   events_bulk_deleted: "bulk deleted events",
   events_bulk_rescheduled: "bulk rescheduled events",
   contacts_reassigned: "reassigned contacts",
+  intake_imported: "imported intake into case",
 };

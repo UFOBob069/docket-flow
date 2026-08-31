@@ -19,6 +19,7 @@ const ACTIONS = new Set<ActivityAction>([
   "events_bulk_deleted",
   "events_bulk_rescheduled",
   "contacts_reassigned",
+  "intake_imported",
 ]);
 
 export async function POST(req: Request): Promise<Response> {

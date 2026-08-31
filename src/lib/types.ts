@@ -233,7 +233,8 @@ export type ActivityAction =
   | "event_deleted"
   | "events_bulk_deleted"
   | "events_bulk_rescheduled"
-  | "contacts_reassigned";
+  | "contacts_reassigned"
+  | "intake_imported";
 
 export interface ActivityEntry {
   id: string;
