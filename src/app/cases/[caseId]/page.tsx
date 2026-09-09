@@ -18,7 +18,6 @@ import {
 } from "@/lib/case-attorneys";
 import { slackChannelLabel, slackChannelUrl } from "@/lib/slack-channel";
 import { buildCalendarBatches, googleCalendarDescription, hasGoogleCalendarSync } from "@/lib/calendar-payload";
-import { isBackfillNonSyncEvent } from "@/lib/calendar-gap-sync";
 import { attendeeEmailsForEvent, canManageEventAttendees, contactNamesForIds } from "@/lib/event-attendees";
 import { postCalendarSync } from "@/lib/calendar-client";
 import { CALENDAR_TIMEZONE, defaultEndIso } from "@/lib/event-factory";
@@ -431,7 +430,6 @@ export default function CaseDetailPage() {
     if (!caseId || !c || !user || !idToken) return;
     if (creatingGoogleInviteId) return;
     if (isGoogleIcsMirrorEvent(sourceEv) || sourceEv.completed || !sourceEv.included) return;
-    if (isBackfillNonSyncEvent(sourceEv)) return;
 
     setCreatingGoogleInviteId(sourceEv.id);
     setMsg(null);
@@ -1927,7 +1925,6 @@ export default function CaseDetailPage() {
                         </button>
                       )}
                       {!isGoogleIcsMirrorEvent(ev) &&
-                        !isBackfillNonSyncEvent(ev) &&
                         !ev.completed &&
                         ev.included &&
                         !hasGoogleCalendarSync(ev) && (
@@ -2157,7 +2154,6 @@ export default function CaseDetailPage() {
                 />
               )}
               {!isGoogleIcsMirrorEvent(editing) &&
-                !isBackfillNonSyncEvent(editing) &&
                 !editing.completed &&
                 editing.included &&
                 !hasGoogleCalendarSync(editing) && (
