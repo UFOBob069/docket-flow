@@ -1,9 +1,11 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { canAccessFirmAdminTools, isFirmAdminPath } from "@/lib/admin-access";
 
 /**
  * Refreshes Supabase auth cookies on navigation (PKCE / server-rendered routes).
  * Safe no-op when Supabase env is missing (local static preview).
+ * Firm admin paths (Missing sync, Closed invites, Backfill) are limited to david@ramosjames.com.
  */
 export async function middleware(request: NextRequest): Promise<NextResponse> {
   /** Supabase sometimes returns the PKCE `code` on `/` when Site URL has no path; exchange needs `/auth/callback`. */
@@ -40,7 +42,17 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     },
   });
 
-  await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (isFirmAdminPath(request.nextUrl.pathname) && !canAccessFirmAdminTools(user?.email)) {
+    const home = request.nextUrl.clone();
+    home.pathname = "/";
+    home.search = "";
+    return NextResponse.redirect(home);
+  }
+
   return response;
 }
 

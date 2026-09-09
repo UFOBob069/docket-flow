@@ -15,11 +15,14 @@ import {
   saveEvent,
 } from "@/lib/supabase/repo";
 import type { CalendarEvent, Case, Contact } from "@/lib/types";
+import { canAccessFirmAdminTools, FIRM_ADMIN_EMAIL } from "@/lib/admin-access";
 
-export const CALENDAR_MISSING_SYNC_ALLOWED_EMAIL = "david@ramosjames.com";
+/** @deprecated Prefer {@link FIRM_ADMIN_EMAIL} from `@/lib/admin-access`. */
+export const CALENDAR_MISSING_SYNC_ALLOWED_EMAIL = FIRM_ADMIN_EMAIL;
 
+/** @deprecated Prefer {@link canAccessFirmAdminTools}. */
 export function canAccessCalendarMissingSync(email: string | null | undefined): boolean {
-  return email?.trim().toLowerCase() === CALENDAR_MISSING_SYNC_ALLOWED_EMAIL;
+  return canAccessFirmAdminTools(email);
 }
 
 export const CALENDAR_GAP_SYNC_CHUNK = 5;

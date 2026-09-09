@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
+import { canAccessFirmAdminTools } from "@/lib/admin-access";
 import { createAdHocCalendarEvent } from "@/lib/event-factory";
 import { getRemindersForEventKind } from "@/lib/case-event-kinds";
 import { parseCasesImportCsv, CASE_IMPORT_CSV_TEMPLATE } from "@/lib/import-cases-csv";
@@ -59,7 +60,15 @@ export default function BackfillPage() {
   }, [loading, router, supabaseReady, user]);
 
   useEffect(() => {
+    if (loading || !supabaseReady || !user) return;
+    if (!canAccessFirmAdminTools(user.email)) {
+      router.replace("/");
+    }
+  }, [loading, router, supabaseReady, user]);
+
+  useEffect(() => {
     if (!supabaseReady || loading || !user) return;
+    if (!canAccessFirmAdminTools(user.email)) return;
     const supabase = getBrowserSupabase();
     let cancelled = false;
     (async () => {
@@ -80,7 +89,7 @@ export default function BackfillPage() {
     return () => {
       cancelled = true;
     };
-  }, [loading, supabaseReady, user]);
+  }, [user, loading, supabaseReady]);
 
   const caseByNumber = useMemo(() => {
     const m = new Map<string, Case>();
@@ -361,6 +370,7 @@ export default function BackfillPage() {
     );
   }
   if (!user) return null;
+  if (!canAccessFirmAdminTools(user.email)) return null;
 
   return (
     <PageWrapper>

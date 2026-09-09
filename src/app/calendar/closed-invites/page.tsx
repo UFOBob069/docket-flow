@@ -7,9 +7,9 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
+import { canAccessFirmAdminTools } from "@/lib/admin-access";
 import { caseDisplayName } from "@/lib/case-display";
 import {
-  canAccessCalendarMissingSync,
   listClosedCaseGoogleInviteRows,
   removeGoogleInvitesForCase,
   rowKey,
@@ -79,7 +79,7 @@ export default function ClosedCaseInvitesPage() {
       router.replace("/login");
       return;
     }
-    if (!canAccessCalendarMissingSync(user.email)) {
+    if (!canAccessFirmAdminTools(user.email)) {
       router.replace("/");
       return;
     }
@@ -213,7 +213,7 @@ export default function ClosedCaseInvitesPage() {
 
   if (!user) return null;
 
-  if (!canAccessCalendarMissingSync(user.email)) {
+  if (!canAccessFirmAdminTools(user.email)) {
     return null;
   }
 

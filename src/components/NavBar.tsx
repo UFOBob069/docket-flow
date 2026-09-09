@@ -4,7 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useAuth, userAvatarUrl, userDisplayName } from "@/context/AuthContext";
-import { canAccessCalendarMissingSync } from "@/lib/calendar-gap-sync";
+import { canAccessFirmAdminTools } from "@/lib/admin-access";
 import { useEffect, useId, useState } from "react";
 
 const FIRM_LOGO_PATH = "/firm-logo.webp";
@@ -78,8 +78,12 @@ export function NavBar() {
   const avatarSrc = user ? userAvatarUrl(user) : undefined;
 
   const visibleLinks = navLinks.filter((l) => {
-    if (l.href === "/calendar/missing-sync" || l.href === "/calendar/closed-invites") {
-      return canAccessCalendarMissingSync(user?.email);
+    if (
+      l.href === "/calendar/missing-sync" ||
+      l.href === "/calendar/closed-invites" ||
+      l.href === "/backfill"
+    ) {
+      return canAccessFirmAdminTools(user?.email);
     }
     return true;
   });
