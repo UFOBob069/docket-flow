@@ -29,8 +29,23 @@ import {
   EmptyState,
   Input,
   PageWrapper,
+  Select,
   Spinner,
 } from "@/components/ui";
+
+type CaseOpenFilter = "open" | "closed" | "all";
+
+const CASE_OPEN_FILTER_OPTIONS: { value: CaseOpenFilter; label: string }[] = [
+  { value: "open", label: "Open cases" },
+  { value: "closed", label: "Closed cases" },
+  { value: "all", label: "All cases" },
+];
+
+function caseMatchesOpenFilter(c: Case, filter: CaseOpenFilter): boolean {
+  if (filter === "all") return true;
+  if (filter === "closed") return c.status === "archived";
+  return c.status === "active";
+}
 
 function todayYmd(): string {
   return new Date().toISOString().slice(0, 10);
@@ -53,6 +68,7 @@ export default function MissingCalendarSyncPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState("");
+  const [caseOpenFilter, setCaseOpenFilter] = useState<CaseOpenFilter>("open");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showBlocked, setShowBlocked] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -94,11 +110,19 @@ export default function MissingCalendarSyncPage() {
     return subscribeContacts(supabase, user.id, setContacts);
   }, [user, loading, supabaseReady]);
 
-  const creatable = useMemo(() => rows.filter((r) => r.canCreate), [rows]);
-  const blocked = useMemo(() => rows.filter((r) => !r.canCreate), [rows]);
+  useEffect(() => {
+    setSelected(new Set());
+  }, [caseOpenFilter]);
+
+  const statusFilteredRows = useMemo(
+    () => rows.filter((r) => caseMatchesOpenFilter(r.case, caseOpenFilter)),
+    [rows, caseOpenFilter]
+  );
+  const creatable = useMemo(() => statusFilteredRows.filter((r) => r.canCreate), [statusFilteredRows]);
+  const blocked = useMemo(() => statusFilteredRows.filter((r) => !r.canCreate), [statusFilteredRows]);
 
   const visibleRows = useMemo(() => {
-    const base = showBlocked ? rows : creatable;
+    const base = showBlocked ? statusFilteredRows : creatable;
     const q = search.trim().toLowerCase();
     if (!q) return base;
     return base.filter(({ case: c, event: e }) => {
@@ -113,7 +137,7 @@ export default function MissingCalendarSyncPage() {
         .toLowerCase();
       return hay.includes(q);
     });
-  }, [rows, creatable, showBlocked, search]);
+  }, [statusFilteredRows, creatable, showBlocked, search]);
 
   const visibleCreatable = useMemo(() => visibleRows.filter((r) => r.canCreate), [visibleRows]);
   const allVisibleSelected =
@@ -269,6 +293,18 @@ export default function MissingCalendarSyncPage() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
+        <Select
+          className="w-auto min-w-[9.5rem]"
+          aria-label="Case status"
+          value={caseOpenFilter}
+          onChange={(e) => setCaseOpenFilter(e.target.value as CaseOpenFilter)}
+        >
+          {CASE_OPEN_FILTER_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </Select>
         <label className="flex cursor-pointer items-center gap-2 text-sm text-text-secondary">
           <input
             type="checkbox"
@@ -279,7 +315,8 @@ export default function MissingCalendarSyncPage() {
           Show blocked ({blocked.length})
         </label>
         <span className="text-sm text-text-muted">
-          {creatable.length} can sync · {blocked.length} blocked · {rows.length} total missing ids
+          {creatable.length} can sync · {blocked.length} blocked · {statusFilteredRows.length} matching
+          {caseOpenFilter !== "all" ? ` · ${rows.length} all statuses` : ""}
         </span>
       </div>
 
@@ -305,11 +342,21 @@ export default function MissingCalendarSyncPage() {
       {!refreshing && visibleRows.length === 0 && !loadError && (
         <div className="mt-8">
           <EmptyState
-            title={showBlocked ? "No blocked rows" : "All caught up"}
+            title={
+              showBlocked
+                ? "No blocked rows"
+                : caseOpenFilter !== "all" && statusFilteredRows.length === 0
+                  ? "No matching cases"
+                  : "All caught up"
+            }
             description={
               showBlocked
                 ? "Every missing-sync row is eligible to create invites."
-                : "No active deadlines are missing Google Calendar linkage."
+                : caseOpenFilter === "closed" && statusFilteredRows.length === 0
+                  ? "No closed cases have go-forward deadlines missing Google ids."
+                  : caseOpenFilter === "open" && statusFilteredRows.length === 0
+                    ? "No open cases have go-forward deadlines missing Google ids."
+                    : "No active deadlines are missing Google Calendar linkage."
             }
           />
         </div>
@@ -359,6 +406,11 @@ export default function MissingCalendarSyncPage() {
                           <Badge variant="warning">No Google id</Badge>
                         ) : (
                           <Badge variant="default">Blocked</Badge>
+                        )}
+                        {c.status === "archived" ? (
+                          <Badge variant="default">Closed</Badge>
+                        ) : (
+                          <Badge variant="success">Open</Badge>
                         )}
                         {e.scheduleKind === "meeting" ? (
                           <Badge variant="primary">Meeting</Badge>
