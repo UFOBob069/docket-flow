@@ -13,6 +13,7 @@ import { caseDisplayName, caseNumberLookupKeys } from "@/lib/case-display";
 import { resolvedCaseClientName } from "@/lib/client-name";
 import type { CaseTrackerPipeline } from "@/lib/case-tracker-pipeline";
 import { normalizeGoogleCalendarInviteColorId } from "@/lib/google-calendar-invite-colors";
+import { hasGoogleCalendarSync } from "@/lib/calendar-payload";
 
 type Unsubscribe = () => void;
 
@@ -1028,6 +1029,56 @@ export async function fetchUnsyncedForwardEvents(
     case: caseById.get(caseId)!,
     events,
   }));
+}
+
+/**
+ * Archived (closed) cases that still have DocketFlow-managed Google Calendar linkage.
+ * ICS mirror rows are excluded — those are read-only imports, not DF invites.
+ */
+export async function fetchArchivedCasesWithGoogleSyncedEvents(
+  supabase: SupabaseClient
+): Promise<{ case: Case; events: CalendarEvent[] }[]> {
+  const cases = await fetchCasesList(supabase, "");
+  const archived = cases.filter((c) => c.status === "archived");
+  if (archived.length === 0) return [];
+
+  const caseById = new Map(archived.map((c) => [c.id, c]));
+  const columns = `${FIRM_EVENT_LIST_COLUMNS},description,google_host_calendar_id,google_calendar_event_ids_by_email`;
+  const byCase = new Map<string, CalendarEvent[]>();
+  const archivedIds = archived.map((c) => c.id);
+
+  for (let i = 0; i < archivedIds.length; i += CASE_IDS_IN_CHUNK) {
+    const chunk = archivedIds.slice(i, i + CASE_IDS_IN_CHUNK);
+    let from = 0;
+    for (;;) {
+      const { data, error } = await supabase
+        .from("case_events")
+        .select(columns)
+        .in("case_id", chunk)
+        .order("date", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, from + POSTGREST_PAGE_SIZE - 1);
+      if (error) throw error;
+      const page = (data ?? []) as unknown as Record<string, unknown>[];
+      for (const r of page) {
+        const ev = eventFromRow(r);
+        if (!hasGoogleCalendarSync(ev)) continue;
+        if (!caseById.has(ev.caseId)) continue;
+        const list = byCase.get(ev.caseId);
+        if (list) list.push(ev);
+        else byCase.set(ev.caseId, [ev]);
+      }
+      if (page.length < POSTGREST_PAGE_SIZE) break;
+      from += POSTGREST_PAGE_SIZE;
+    }
+  }
+
+  const bundled = Array.from(byCase.entries()).map(([caseId, events]) => ({
+    case: caseById.get(caseId)!,
+    events,
+  }));
+  bundled.sort((a, b) => caseDisplayName(a.case).localeCompare(caseDisplayName(b.case)));
+  return bundled;
 }
 
 export function subscribeEvents(

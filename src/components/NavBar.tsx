@@ -18,6 +18,11 @@ const navLinks = [
     match: (p: string) => p.startsWith("/calendar/missing-sync"),
   },
   {
+    href: "/calendar/closed-invites",
+    label: "Closed invites",
+    match: (p: string) => p.startsWith("/calendar/closed-invites"),
+  },
+  {
     href: "/intakes",
     label: "Intakes",
     match: (p: string) => p.startsWith("/intakes"),
@@ -72,9 +77,12 @@ export function NavBar() {
   const menuId = useId();
   const avatarSrc = user ? userAvatarUrl(user) : undefined;
 
-  const visibleLinks = navLinks.filter(
-    (l) => l.href !== "/calendar/missing-sync" || canAccessCalendarMissingSync(user?.email)
-  );
+  const visibleLinks = navLinks.filter((l) => {
+    if (l.href === "/calendar/missing-sync" || l.href === "/calendar/closed-invites") {
+      return canAccessCalendarMissingSync(user?.email);
+    }
+    return true;
+  });
 
   useEffect(() => {
     setMenuOpen(false);

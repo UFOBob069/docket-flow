@@ -1,10 +1,19 @@
 import { buildCalendarBatches, hasGoogleCalendarSync } from "@/lib/calendar-payload";
 import { postCalendarSync } from "@/lib/calendar-client";
 import { isGoogleIcsMirrorEvent } from "@/lib/calendar-event-origin";
+import {
+  calendarDeletePayload,
+  eventNeedsGoogleCalendarClear,
+} from "@/lib/calendar-delete-payload";
 import { caseDisplayName } from "@/lib/case-display";
 import { deadlineInclusiveEndDate } from "@/lib/event-date-range";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { fetchEventsForCase, logActivity, saveEvent } from "@/lib/supabase/repo";
+import {
+  clearEventGoogleCalendarFields,
+  fetchEventsForCase,
+  logActivity,
+  saveEvent,
+} from "@/lib/supabase/repo";
 import type { CalendarEvent, Case, Contact } from "@/lib/types";
 
 export const CALENDAR_MISSING_SYNC_ALLOWED_EMAIL = "david@ramosjames.com";
@@ -366,3 +375,92 @@ export async function createGoogleInvitesForCase(
 
   return linked;
 }
+
+export type ClosedInviteRow = {
+  case: Case;
+  event: CalendarEvent;
+};
+
+export function listClosedCaseGoogleInviteRows(
+  bundled: { case: Case; events: CalendarEvent[] }[]
+): ClosedInviteRow[] {
+  const rows: ClosedInviteRow[] = [];
+  for (const { case: c, events } of bundled) {
+    if (c.status !== "archived") continue;
+    for (const event of events) {
+      if (!hasGoogleCalendarSync(event)) continue;
+      rows.push({ case: c, event });
+    }
+  }
+  rows.sort((a, b) => {
+    const byCase = caseDisplayName(a.case).localeCompare(caseDisplayName(b.case));
+    if (byCase !== 0) return byCase;
+    const byDate = a.event.date.localeCompare(b.event.date);
+    if (byDate !== 0) return byDate;
+    return a.event.title.localeCompare(b.event.title);
+  });
+  return rows;
+}
+
+/** Remove Google Calendar invites for selected events; keep DocketFlow rows. */
+export async function removeGoogleInvitesForCase(
+  supabase: SupabaseClient,
+  params: {
+    caseRecord: Case;
+    events: CalendarEvent[];
+    idToken: string;
+    userId: string;
+    userEmail: string;
+    onProgress?: (p: GapSyncProgress) => void;
+  }
+): Promise<number> {
+  const { caseRecord, events, idToken, userId, userEmail, onProgress } = params;
+  const caseId = caseRecord.id;
+  const displayName = caseDisplayName(caseRecord);
+  const fresh = await fetchEventsForCase(supabase, caseId);
+  const freshById = new Map(fresh.map((e) => [e.id, e]));
+
+  const targets: CalendarEvent[] = [];
+  for (const ev of events) {
+    const latest = freshById.get(ev.id);
+    if (!latest) continue;
+    if (!hasGoogleCalendarSync(latest) && !eventNeedsGoogleCalendarClear(latest)) continue;
+    targets.push(latest);
+  }
+  if (targets.length === 0) return 0;
+
+  let removed = 0;
+  for (let i = 0; i < targets.length; i++) {
+    const latest = targets[i]!;
+    onProgress?.({
+      phase: `${displayName}: removing ${i + 1} of ${targets.length} — ${latest.title}`,
+      current: i,
+      total: targets.length,
+    });
+
+    const deleteBody = calendarDeletePayload(latest);
+    if (deleteBody) {
+      const res = await postCalendarSync(deleteBody, idToken);
+      const calJson = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(calJson.error ?? "Google Calendar delete failed");
+    }
+
+    if (eventNeedsGoogleCalendarClear(latest)) {
+      await clearEventGoogleCalendarFields(supabase, caseId, latest.id);
+    }
+    removed++;
+  }
+
+  if (removed > 0) {
+    await logActivity(supabase, userId, {
+      caseId,
+      caseName: displayName,
+      action: "event_edited",
+      description: `Removed Google Calendar invites for ${removed} deadline(s) on closed case`,
+      userEmail,
+    });
+  }
+
+  return removed;
+}
+

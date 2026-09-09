@@ -10,14 +10,14 @@ import { getBrowserSupabase } from "@/lib/supabase/singleton";
 import { caseDisplayName } from "@/lib/case-display";
 import {
   canAccessCalendarMissingSync,
-  createGoogleInvitesForCase,
-  listUnsyncedEvents,
+  listClosedCaseGoogleInviteRows,
+  removeGoogleInvitesForCase,
   rowKey,
+  type ClosedInviteRow,
   type GapSyncProgress,
-  type UnsyncedEventRow,
 } from "@/lib/calendar-gap-sync";
-import { fetchUnsyncedForwardEvents, subscribeContacts } from "@/lib/supabase/repo";
-import type { CalendarEvent, Case, Contact } from "@/lib/types";
+import { fetchArchivedCasesWithGoogleSyncedEvents } from "@/lib/supabase/repo";
+import type { CalendarEvent, Case } from "@/lib/types";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { useHydrated } from "@/hooks/useHydrated";
 import {
@@ -29,23 +29,8 @@ import {
   EmptyState,
   Input,
   PageWrapper,
-  Select,
   Spinner,
 } from "@/components/ui";
-
-type CaseOpenFilter = "open" | "closed" | "all";
-
-const CASE_OPEN_FILTER_OPTIONS: { value: CaseOpenFilter; label: string }[] = [
-  { value: "open", label: "Open cases" },
-  { value: "closed", label: "Closed cases" },
-  { value: "all", label: "All cases" },
-];
-
-function caseMatchesOpenFilter(c: Case, filter: CaseOpenFilter): boolean {
-  if (filter === "all") return true;
-  if (filter === "closed") return c.status === "archived";
-  return c.status === "active";
-}
 
 function todayYmd(): string {
   return new Date().toISOString().slice(0, 10);
@@ -59,22 +44,19 @@ function formatEventDate(ev: CalendarEvent): string {
   return format(parseISO(ev.date), "MMM d, yyyy");
 }
 
-export default function MissingCalendarSyncPage() {
+export default function ClosedCaseInvitesPage() {
   const router = useRouter();
   const hydrated = useHydrated();
   const { user, loading, idToken, supabaseReady } = useAuth();
-  const [contacts, setContacts] = useState<Contact[]>([]);
-  const [rows, setRows] = useState<UnsyncedEventRow[]>([]);
+  const [rows, setRows] = useState<ClosedInviteRow[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState("");
-  const [caseOpenFilter, setCaseOpenFilter] = useState<CaseOpenFilter>("open");
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [showBlocked, setShowBlocked] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
-  const [syncBusy, setSyncBusy] = useState(false);
-  const [syncProgress, setSyncProgress] = useState<GapSyncProgress | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<GapSyncProgress | null>(null);
 
   const loadRows = useCallback(async () => {
     if (!user || !supabaseReady) return;
@@ -82,8 +64,8 @@ export default function MissingCalendarSyncPage() {
     setLoadError(null);
     try {
       const supabase = getBrowserSupabase();
-      const bundled = await fetchUnsyncedForwardEvents(supabase, todayYmd());
-      setRows(listUnsyncedEvents(bundled, { forwardOnly: true, todayYmd: todayYmd() }));
+      const bundled = await fetchArchivedCasesWithGoogleSyncedEvents(supabase);
+      setRows(listClosedCaseGoogleInviteRows(bundled));
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load events");
     } finally {
@@ -104,48 +86,24 @@ export default function MissingCalendarSyncPage() {
     void loadRows();
   }, [user, loading, supabaseReady, router, loadRows]);
 
-  useEffect(() => {
-    if (!supabaseReady || loading || !user) return;
-    const supabase = getBrowserSupabase();
-    return subscribeContacts(supabase, user.id, setContacts);
-  }, [user, loading, supabaseReady]);
-
-  useEffect(() => {
-    setSelected(new Set());
-  }, [caseOpenFilter]);
-
-  const statusFilteredRows = useMemo(
-    () => rows.filter((r) => caseMatchesOpenFilter(r.case, caseOpenFilter)),
-    [rows, caseOpenFilter]
-  );
-  const creatable = useMemo(() => statusFilteredRows.filter((r) => r.canCreate), [statusFilteredRows]);
-  const blocked = useMemo(() => statusFilteredRows.filter((r) => !r.canCreate), [statusFilteredRows]);
-
   const visibleRows = useMemo(() => {
-    const base = showBlocked ? statusFilteredRows : creatable;
     const q = search.trim().toLowerCase();
-    if (!q) return base;
-    return base.filter(({ case: c, event: e }) => {
-      const hay = [
-        caseDisplayName(c),
-        c.clientName,
-        c.caseNumber ?? "",
-        e.title,
-        e.date,
-      ]
+    if (!q) return rows;
+    return rows.filter(({ case: c, event: e }) => {
+      const hay = [caseDisplayName(c), c.clientName, c.caseNumber ?? "", e.title, e.date]
         .join(" ")
         .toLowerCase();
       return hay.includes(q);
     });
-  }, [statusFilteredRows, creatable, showBlocked, search]);
+  }, [rows, search]);
 
-  const visibleCreatable = useMemo(() => visibleRows.filter((r) => r.canCreate), [visibleRows]);
+  const caseCount = useMemo(() => new Set(visibleRows.map((r) => r.case.id)).size, [visibleRows]);
+
   const allVisibleSelected =
-    visibleCreatable.length > 0 &&
-    visibleCreatable.every((r) => selected.has(rowKey(r.case.id, r.event.id)));
+    visibleRows.length > 0 &&
+    visibleRows.every((r) => selected.has(rowKey(r.case.id, r.event.id)));
 
-  function toggleRow(r: UnsyncedEventRow) {
-    if (!r.canCreate) return;
+  function toggleRow(r: ClosedInviteRow) {
     const key = rowKey(r.case.id, r.event.id);
     setSelected((prev) => {
       const next = new Set(prev);
@@ -159,13 +117,13 @@ export default function MissingCalendarSyncPage() {
     if (allVisibleSelected) {
       setSelected((prev) => {
         const next = new Set(prev);
-        for (const r of visibleCreatable) next.delete(rowKey(r.case.id, r.event.id));
+        for (const r of visibleRows) next.delete(rowKey(r.case.id, r.event.id));
         return next;
       });
     } else {
       setSelected((prev) => {
         const next = new Set(prev);
-        for (const r of visibleCreatable) next.add(rowKey(r.case.id, r.event.id));
+        for (const r of visibleRows) next.add(rowKey(r.case.id, r.event.id));
         return next;
       });
     }
@@ -176,15 +134,23 @@ export default function MissingCalendarSyncPage() {
     setTimeout(() => setSuccessMsg(null), 4000);
   }
 
-  async function createSelectedInvites() {
-    if (!user || !idToken || selected.size === 0 || syncBusy) return;
-    setSyncBusy(true);
+  async function removeSelectedInvites() {
+    if (!user || !idToken || selected.size === 0 || busy) return;
+    if (
+      !confirm(
+        `Remove ${selected.size} Google Calendar invite${selected.size !== 1 ? "s" : ""} from closed cases?\n\nDocketFlow deadlines stay as history; only Google Calendar copies are removed.`
+      )
+    ) {
+      return;
+    }
+
+    setBusy(true);
     setMsg(null);
-    setSyncProgress({ phase: "Starting…", current: 0, total: 1 });
+    setProgress({ phase: "Starting…", current: 0, total: 1 });
     try {
       const supabase = getBrowserSupabase();
       const byCase = new Map<string, { caseRecord: Case; events: CalendarEvent[] }>();
-      for (const r of creatable) {
+      for (const r of rows) {
         const key = rowKey(r.case.id, r.event.id);
         if (!selected.has(key)) continue;
         const bucket = byCase.get(r.case.id) ?? { caseRecord: r.case, events: [] };
@@ -192,45 +158,44 @@ export default function MissingCalendarSyncPage() {
         byCase.set(r.case.id, bucket);
       }
 
-      let totalLinked = 0;
+      let totalRemoved = 0;
       const caseEntries = [...byCase.values()];
       for (let i = 0; i < caseEntries.length; i++) {
         const { caseRecord, events } = caseEntries[i]!;
-        setSyncProgress({
+        setProgress({
           phase: `Case ${i + 1} of ${caseEntries.length}: ${caseDisplayName(caseRecord)}`,
           current: i,
           total: caseEntries.length,
         });
-        const linked = await createGoogleInvitesForCase(supabase, {
+        const removed = await removeGoogleInvitesForCase(supabase, {
           caseRecord,
           events,
-          contacts,
           idToken,
           userId: user.id,
           userEmail: user.email ?? "",
-          onProgress: (p) => setSyncProgress(p),
+          onProgress: (p) => setProgress(p),
         });
-        totalLinked += linked;
+        totalRemoved += removed;
       }
 
       setSelected(new Set());
       await loadRows();
       flash(
-        totalLinked > 0
-          ? `Created ${totalLinked} Google Calendar invite${totalLinked !== 1 ? "s" : ""}`
-          : "Nothing was created — selected rows may already be synced or ineligible."
+        totalRemoved > 0
+          ? `Removed ${totalRemoved} Google Calendar invite${totalRemoved !== 1 ? "s" : ""}`
+          : "Nothing was removed — selected rows may already be cleared."
       );
     } catch (e) {
-      let message = e instanceof Error ? e.message : "Could not create invites";
+      let message = e instanceof Error ? e.message : "Could not remove invites";
       if (message === "Failed to fetch") {
         message =
-          "Network error or timeout. Refresh this page — some invites may have been created anyway.";
+          "Network error or timeout. Refresh this page — some invites may have been removed anyway.";
       }
       setMsg(message);
       await loadRows();
     } finally {
-      setSyncBusy(false);
-      setSyncProgress(null);
+      setBusy(false);
+      setProgress(null);
     }
   }
 
@@ -241,7 +206,7 @@ export default function MissingCalendarSyncPage() {
   if (!isSupabaseConfigured()) {
     return (
       <PageWrapper>
-        <p className="text-text-muted">Configure Supabase to use missing sync.</p>
+        <p className="text-text-muted">Configure Supabase to use closed-case invite cleanup.</p>
       </PageWrapper>
     );
   }
@@ -257,19 +222,18 @@ export default function MissingCalendarSyncPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-xs font-medium uppercase tracking-wider text-text-dim">Calendar</p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-text">Missing Google Calendar sync</h1>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-text">
+            Closed cases with Google invites
+          </h1>
           <p className="mt-2 max-w-2xl text-sm text-text-muted">
-            Today and upcoming deadlines in DocketFlow with no Google event id — including prior-service{" "}
-            <span className="font-medium text-text-secondary">backfill</span> rows. Select rows and create invites for
-            anything that should be on the team calendar. Past dates are hidden. ICS mirrors, completed, and excluded
-            items appear under blocked when enabled. To clean up leftover invites on archived cases, use{" "}
-            <Link href="/calendar/closed-invites" className="font-medium text-primary hover:underline">
-              Closed invites
+            Archived cases that still have DocketFlow-managed Google Calendar invites. Select rows to remove those
+            invites from team calendars. Deadlines stay in DocketFlow as history.{" "}
+            <Link href="/calendar/missing-sync" className="font-medium text-primary hover:underline">
+              Missing sync
             </Link>
-            .
           </p>
         </div>
-        <Button variant="secondary" size="sm" disabled={refreshing || syncBusy} onClick={() => void loadRows()}>
+        <Button variant="secondary" size="sm" disabled={refreshing || busy} onClick={() => void loadRows()}>
           Refresh
         </Button>
       </div>
@@ -297,40 +261,25 @@ export default function MissingCalendarSyncPage() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <Select
-          className="w-auto min-w-[9.5rem]"
-          aria-label="Case status"
-          value={caseOpenFilter}
-          onChange={(e) => setCaseOpenFilter(e.target.value as CaseOpenFilter)}
-        >
-          {CASE_OPEN_FILTER_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </Select>
-        <label className="flex cursor-pointer items-center gap-2 text-sm text-text-secondary">
-          <input
-            type="checkbox"
-            className="h-4 w-4 rounded border-border text-primary focus:ring-primary/30"
-            checked={showBlocked}
-            onChange={(e) => setShowBlocked(e.target.checked)}
-          />
-          Show blocked ({blocked.length})
-        </label>
         <span className="text-sm text-text-muted">
-          {creatable.length} can sync · {blocked.length} blocked · {statusFilteredRows.length} matching
-          {caseOpenFilter !== "all" ? ` · ${rows.length} all statuses` : ""}
+          {visibleRows.length} invite{visibleRows.length !== 1 ? "s" : ""} · {caseCount} closed case
+          {caseCount !== 1 ? "s" : ""}
+          {search.trim() && rows.length !== visibleRows.length ? ` · ${rows.length} total` : ""}
         </span>
       </div>
 
       {selected.size > 0 && (
-        <div className="sticky top-16 z-30 mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-primary/20 bg-primary-light px-5 py-3 shadow-sm">
-          <span className="text-sm font-semibold text-primary">{selected.size} selected</span>
-          <Button size="sm" disabled={syncBusy || !idToken} onClick={() => void createSelectedInvites()}>
-            {syncBusy ? "Creating…" : "Create Google invites"}
+        <div className="sticky top-16 z-30 mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-danger/20 bg-danger-light px-5 py-3 shadow-sm">
+          <span className="text-sm font-semibold text-danger">{selected.size} selected</span>
+          <Button
+            size="sm"
+            variant="danger"
+            disabled={busy || !idToken}
+            onClick={() => void removeSelectedInvites()}
+          >
+            {busy ? "Removing…" : "Remove Google invites"}
           </Button>
-          <Button variant="ghost" size="sm" disabled={syncBusy} onClick={() => setSelected(new Set())}>
+          <Button variant="ghost" size="sm" disabled={busy} onClick={() => setSelected(new Set())}>
             Clear
           </Button>
         </div>
@@ -346,21 +295,11 @@ export default function MissingCalendarSyncPage() {
       {!refreshing && visibleRows.length === 0 && !loadError && (
         <div className="mt-8">
           <EmptyState
-            title={
-              showBlocked
-                ? "No blocked rows"
-                : caseOpenFilter !== "all" && statusFilteredRows.length === 0
-                  ? "No matching cases"
-                  : "All caught up"
-            }
+            title={search.trim() ? "No matches" : "All clear"}
             description={
-              showBlocked
-                ? "Every missing-sync row is eligible to create invites."
-                : caseOpenFilter === "closed" && statusFilteredRows.length === 0
-                  ? "No closed cases have go-forward deadlines missing Google ids."
-                  : caseOpenFilter === "open" && statusFilteredRows.length === 0
-                    ? "No open cases have go-forward deadlines missing Google ids."
-                    : "No active deadlines are missing Google Calendar linkage."
+              search.trim()
+                ? "No closed-case Google invites match that search."
+                : "No archived cases currently have DocketFlow-managed Google Calendar invites."
             }
           />
         </div>
@@ -370,52 +309,40 @@ export default function MissingCalendarSyncPage() {
         <Card className="mt-6">
           <CardHeader>
             <div className="flex items-center justify-between gap-3">
-              <h2 className="text-base font-semibold text-text">
-                {showBlocked ? "Missing sync (including blocked)" : "Ready to create invites"}
-              </h2>
-              {!showBlocked && visibleCreatable.length > 0 && (
-                <button
-                  type="button"
-                  className="text-xs font-medium text-primary hover:underline"
-                  onClick={toggleAllVisible}
-                >
-                  {allVisibleSelected ? "Deselect all" : "Select all"}
-                </button>
-              )}
+              <h2 className="text-base font-semibold text-text">Google invites on closed cases</h2>
+              <button
+                type="button"
+                className="text-xs font-medium text-primary hover:underline"
+                onClick={toggleAllVisible}
+              >
+                {allVisibleSelected ? "Deselect all" : "Select all"}
+              </button>
             </div>
           </CardHeader>
           <CardBody className="p-0">
             <ul className="divide-y divide-border">
-              {visibleRows.map(({ case: c, event: e, canCreate, blockReason }) => {
+              {visibleRows.map(({ case: c, event: e }) => {
                 const key = rowKey(c.id, e.id);
                 const checked = selected.has(key);
+                const isPast = (e.deadlineEndDate && e.deadlineEndDate > e.date ? e.deadlineEndDate : e.date) < todayYmd();
                 return (
-                  <li
-                    key={key}
-                    className={`flex gap-4 px-5 py-4 ${!canCreate ? "bg-surface-alt/40" : ""}`}
-                  >
+                  <li key={key} className="flex gap-4 px-5 py-4">
                     <div className="pt-0.5">
                       <input
                         type="checkbox"
                         className="h-4 w-4 rounded border-border text-primary focus:ring-primary/30 disabled:opacity-40"
                         checked={checked}
-                        disabled={!canCreate || syncBusy}
-                        onChange={() => toggleRow({ case: c, event: e, canCreate, blockReason })}
+                        disabled={busy}
+                        onChange={() => toggleRow({ case: c, event: e })}
                       />
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="text-sm font-medium text-text">{e.title}</p>
-                        {canCreate ? (
-                          <Badge variant="warning">No Google id</Badge>
-                        ) : (
-                          <Badge variant="default">Blocked</Badge>
-                        )}
-                        {c.status === "archived" ? (
-                          <Badge variant="default">Closed</Badge>
-                        ) : (
-                          <Badge variant="success">Open</Badge>
-                        )}
+                        <Badge variant="default">Closed</Badge>
+                        <Badge variant="success">Synced</Badge>
+                        {e.completed && <Badge variant="default">Completed</Badge>}
+                        {isPast && !e.completed && <Badge variant="warning">Past</Badge>}
                         {e.scheduleKind === "meeting" ? (
                           <Badge variant="primary">Meeting</Badge>
                         ) : (
@@ -423,7 +350,11 @@ export default function MissingCalendarSyncPage() {
                         )}
                       </div>
                       <p className="mt-1 text-xs text-text-muted">
-                        <Link href={`/cases/${c.id}`} prefetch={false} className="font-medium text-primary hover:underline">
+                        <Link
+                          href={`/cases/${c.id}`}
+                          prefetch={false}
+                          className="font-medium text-primary hover:underline"
+                        >
                           {caseDisplayName(c)}
                         </Link>
                         {c.clientName && c.clientName !== caseDisplayName(c) && (
@@ -432,9 +363,6 @@ export default function MissingCalendarSyncPage() {
                       </p>
                       {e.description?.trim() && (
                         <p className="mt-1 line-clamp-2 text-xs text-text-secondary">{e.description.trim()}</p>
-                      )}
-                      {blockReason && (
-                        <p className="mt-1 text-xs text-text-dim">{blockReason}</p>
                       )}
                     </div>
                     <div className="shrink-0 text-right text-sm tabular-nums text-text-secondary">
@@ -448,7 +376,7 @@ export default function MissingCalendarSyncPage() {
         </Card>
       )}
 
-      {syncBusy && syncProgress && (
+      {busy && progress && (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm"
           role="dialog"
@@ -456,15 +384,15 @@ export default function MissingCalendarSyncPage() {
           aria-live="polite"
         >
           <div className="w-full max-w-md rounded-2xl border border-border bg-white p-6 shadow-xl">
-            <h2 className="text-base font-semibold text-text">Creating Google Calendar invites</h2>
-            <p className="mt-2 text-sm text-text-secondary">{syncProgress.phase}</p>
+            <h2 className="text-base font-semibold text-text">Removing Google Calendar invites</h2>
+            <p className="mt-2 text-sm text-text-secondary">{progress.phase}</p>
             <div className="mt-4 h-2.5 w-full overflow-hidden rounded-full bg-surface-alt">
               <div
-                className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out"
+                className="h-full rounded-full bg-danger transition-[width] duration-300 ease-out"
                 style={{
                   width: `${
-                    syncProgress.total > 0
-                      ? Math.min(100, Math.round((syncProgress.current / syncProgress.total) * 100))
+                    progress.total > 0
+                      ? Math.min(100, Math.round((progress.current / progress.total) * 100))
                       : 0
                   }%`,
                 }}

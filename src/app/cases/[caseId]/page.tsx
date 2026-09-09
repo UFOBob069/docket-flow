@@ -18,6 +18,10 @@ import {
 } from "@/lib/case-attorneys";
 import { slackChannelLabel, slackChannelUrl } from "@/lib/slack-channel";
 import { buildCalendarBatches, googleCalendarDescription, hasGoogleCalendarSync } from "@/lib/calendar-payload";
+import {
+  calendarDeletePayload,
+  eventNeedsGoogleCalendarClear,
+} from "@/lib/calendar-delete-payload";
 import { attendeeEmailsForEvent, canManageEventAttendees, contactNamesForIds } from "@/lib/event-attendees";
 import { postCalendarSync } from "@/lib/calendar-client";
 import { CALENDAR_TIMEZONE, defaultEndIso } from "@/lib/event-factory";
@@ -143,31 +147,6 @@ function isCalendarEventOverdue(ev: CalendarEvent): boolean {
   return differenceInCalendarDays(parseISO(last), parseISO(todayYmd())) < 0;
 }
 
-/** Delete body for `/api/calendar/sync` — SOL host rows use `googleHostCalendarId` instead of per-user copies */
-function calendarDeletePayload(ev: CalendarEvent): {
-  action: "delete";
-  googleEventId: string;
-  googleHostCalendarId?: string;
-  googleCalendarEventIdsByEmail?: Record<string, string>;
-  scheduleKind?: "deadline" | "meeting";
-} {
-  const base = {
-    action: "delete" as const,
-    googleEventId: ev.googleEventId!,
-    ...(ev.scheduleKind === "meeting" ? { scheduleKind: "meeting" as const } : {}),
-  };
-  if (ev.googleHostCalendarId) {
-    return { ...base, googleHostCalendarId: ev.googleHostCalendarId };
-  }
-  if (
-    ev.googleCalendarEventIdsByEmail &&
-    Object.keys(ev.googleCalendarEventIdsByEmail).length > 0
-  ) {
-    return { ...base, googleCalendarEventIdsByEmail: ev.googleCalendarEventIdsByEmail };
-  }
-  return base;
-}
-
 /** Taxonomy kinds always use the fixed reminder list (repair stale DB rows on edit). */
 function calendarEventForEdit(e: CalendarEvent): CalendarEvent {
   const k = e.eventKind ?? "other_event";
@@ -183,30 +162,18 @@ function shortDeadlineTitle(title: string, max = 56): string {
   return `${t.slice(0, Math.max(0, max - 1))}…`;
 }
 
-/** True when we should strip Google linkage from the DB row (non-ICS events only). */
-function eventNeedsGoogleCalendarClear(ev: CalendarEvent): boolean {
-  if (isGoogleIcsMirrorEvent(ev)) return false;
-  return Boolean(
-    ev.googleEventId ||
-      ev.googleHostCalendarId ||
-      (ev.googleCalendarEventIdsByEmail &&
-        Object.keys(ev.googleCalendarEventIdsByEmail).length > 0)
-  );
-}
-
 /** One step per Google delete + clear, plus finalize (updateCase + activity). */
 function archiveProgressTotalSteps(events: CalendarEvent[]): number {
   let n = 0;
   for (const ev of events) {
-    if (isGoogleIcsMirrorEvent(ev)) continue;
-    if (ev.googleEventId) n++;
+    if (calendarDeletePayload(ev)) n++;
     if (eventNeedsGoogleCalendarClear(ev)) n++;
   }
   return n + 2;
 }
 
 function permanentDeleteProgressTotalSteps(events: CalendarEvent[]): number {
-  const n = events.filter((e) => !isGoogleIcsMirrorEvent(e) && e.googleEventId).length;
+  const n = events.filter((e) => calendarDeletePayload(e) != null).length;
   return n + 2;
 }
 
@@ -623,9 +590,10 @@ export default function CaseDetailPage() {
       try {
         let removed = 0;
         for (const ev of events) {
-          if (!isGoogleIcsMirrorEvent(ev) && ev.googleEventId) {
+          const deleteBody = calendarDeletePayload(ev);
+          if (deleteBody) {
             pulse(`Removing “${shortDeadlineTitle(ev.title)}” from Google Calendar…`);
-            const res = await postCalendarSync(calendarDeletePayload(ev), idToken);
+            const res = await postCalendarSync(deleteBody, idToken);
             if (!res.ok) {
               const j = (await res.json()) as { error?: string };
               throw new Error(j.error ?? "Calendar delete failed");
@@ -702,8 +670,9 @@ export default function CaseDetailPage() {
     if (!caseId || !c || !user) return;
     setBusy(true); setMsg(null);
     try {
-      if (!isGoogleIcsMirrorEvent(ev) && ev.googleEventId) {
-        const res = await postCalendarSync(calendarDeletePayload(ev), idToken);
+      const deleteBody = calendarDeletePayload(ev);
+      if (deleteBody) {
+        const res = await postCalendarSync(deleteBody, idToken);
         if (!res.ok) { const j = (await res.json()) as { error?: string }; throw new Error(j.error ?? "Calendar delete failed"); }
       }
       const supabase = getBrowserSupabase();
@@ -738,7 +707,7 @@ export default function CaseDetailPage() {
     }
     setBusy(true);
     setMsg(null);
-    const googleTargets = events.filter((e) => !isGoogleIcsMirrorEvent(e) && e.googleEventId);
+    const googleTargets = events.filter((e) => calendarDeletePayload(e) != null);
     const totalSteps = permanentDeleteProgressTotalSteps(events);
     let completed = 0;
     const pulse = (phase: string) => {
@@ -756,7 +725,9 @@ export default function CaseDetailPage() {
       let googleRemoved = 0;
       for (const ev of googleTargets) {
         pulse(`Removing “${shortDeadlineTitle(ev.title)}” from Google Calendar…`);
-        const res = await postCalendarSync(calendarDeletePayload(ev), idToken);
+        const deleteBody = calendarDeletePayload(ev);
+        if (!deleteBody) continue;
+        const res = await postCalendarSync(deleteBody, idToken);
         if (!res.ok) {
           const j = (await res.json()) as { error?: string };
           throw new Error(j.error ?? "Calendar delete failed");
@@ -901,8 +872,9 @@ export default function CaseDetailPage() {
     try {
       const selectedEvents = events.filter((e) => selected.has(e.id));
       for (const ev of selectedEvents) {
-        if (!isGoogleIcsMirrorEvent(ev) && ev.googleEventId) {
-          await postCalendarSync(calendarDeletePayload(ev), idToken);
+        const deleteBody = calendarDeletePayload(ev);
+        if (deleteBody) {
+          await postCalendarSync(deleteBody, idToken);
         }
       }
       const supabase = getBrowserSupabase();
