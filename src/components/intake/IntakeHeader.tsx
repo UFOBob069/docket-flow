@@ -109,6 +109,16 @@ export function IntakeHeader({ intake, callId }: Props) {
                 Promote to Case
               </Link>
             )}
+            {intake.slack_permalink?.trim() && (
+              <a
+                href={intake.slack_permalink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center justify-center rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-text-secondary hover:bg-surface-alt"
+              >
+                Open in Slack
+              </a>
+            )}
             {intake.quo_link && (
               <a
                 href={intake.quo_link}

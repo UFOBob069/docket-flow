@@ -183,6 +183,10 @@ export function intakeFromIntakesRow(r: Record<string, unknown>): IntakeFlat {
     call_id: r.call_id ?? null,
     created_at: r.created_at ?? null,
     case_id: r.case_id ?? null,
+    slack_permalink:
+      r.slack_permalink === null || r.slack_permalink === undefined || r.slack_permalink === ""
+        ? null
+        : String(r.slack_permalink),
   };
 
   for (const col of INTAKE_EDITABLE_COLUMNS) {

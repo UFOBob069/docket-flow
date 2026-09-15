@@ -6,6 +6,8 @@ export type IntakeFlat = {
   phone: string | null;
   accident_date: string | null;
   quo_link: string | null;
+  /** Slack permalink to the #lead-calls thread (Quo router). Null on older rows. */
+  slack_permalink: string | null;
   transcript: string | null;
   created_at: string | null;
   case_id?: string | null;
@@ -79,14 +81,20 @@ export type IntakeFlat = {
   notes: string | null;
 };
 
+/** Live `public.intake_interactions` row (Quo router). */
 export type IntakeInteraction = {
   id: string;
   intake_call_id: string;
-  created_at: string | null;
-  channel: string | null;
+  phone: string | null;
+  type: string | null;
   direction: string | null;
-  summary: string | null;
-  body: string | null;
+  source_id: string | null;
+  /** Quo summary for calls; SMS body for texts. */
+  content: string | null;
+  transcript: string | null;
+  quo_link: string | null;
+  slack_permalink: string | null;
+  occurred_at: string | null;
 };
 
 export type IntakeListItem = Pick<

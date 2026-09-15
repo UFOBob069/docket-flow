@@ -11,6 +11,7 @@ const INTAKE_SELECT = [
   "call_id",
   "created_at",
   "case_id",
+  "slack_permalink",
   "data",
   ...INTAKE_EDITABLE_COLUMNS,
 ].join(",");
@@ -93,15 +94,32 @@ export async function fetchIntakeInteractions(
 ): Promise<IntakeInteraction[]> {
   const { data, error } = await supabase
     .from("intake_interactions")
-    .select("id, intake_call_id, created_at, channel, direction, summary, body")
+    .select(
+      "id, intake_call_id, phone, type, direction, source_id, content, transcript, quo_link, slack_permalink, occurred_at"
+    )
     .eq("intake_call_id", callId)
-    .order("created_at", { ascending: true });
+    .order("occurred_at", { ascending: true });
   if (error) {
     if (isMissingRelationError(error)) return [];
     console.warn("[intake_interactions]", error.code, error.message);
     return [];
   }
-  return (data ?? []) as IntakeInteraction[];
+  return (data ?? []).map((row) => {
+    const r = row as Record<string, unknown>;
+    return {
+      id: String(r.id),
+      intake_call_id: String(r.intake_call_id ?? callId),
+      phone: (r.phone as string) ?? null,
+      type: (r.type as string) ?? null,
+      direction: (r.direction as string) ?? null,
+      source_id: (r.source_id as string) ?? null,
+      content: (r.content as string) ?? null,
+      transcript: (r.transcript as string) ?? null,
+      quo_link: (r.quo_link as string) ?? null,
+      slack_permalink: (r.slack_permalink as string) ?? null,
+      occurred_at: (r.occurred_at as string) ?? null,
+    };
+  });
 }
 
 export async function patchIntakeByCallId(

@@ -12,6 +12,38 @@ type ActivityItem = {
   badge?: string;
 };
 
+function typeLabel(type: string | null | undefined): string {
+  switch ((type ?? "").toLowerCase()) {
+    case "call":
+      return "Call";
+    case "sona_call":
+      return "Sona call";
+    case "missed_call":
+      return "Missed call";
+    case "voicemail":
+      return "Voicemail";
+    case "text":
+      return "Text";
+    case "email":
+      return "Email";
+    default:
+      return type?.trim() || "Interaction";
+  }
+}
+
+function directionLabel(direction: string | null | undefined): string | null {
+  const d = (direction ?? "").toLowerCase();
+  if (d === "inbound") return "Inbound";
+  if (d === "outbound") return "Outbound";
+  return direction?.trim() || null;
+}
+
+function truncate(text: string, max = 280): string {
+  const t = text.trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, Math.max(0, max - 1))}…`;
+}
+
 function buildActivity(
   intake: IntakeFlat,
   interactions: IntakeInteraction[]
@@ -38,12 +70,15 @@ function buildActivity(
   }
 
   for (const ix of interactions) {
+    const label = typeLabel(ix.type);
+    const dir = directionLabel(ix.direction);
+    const content = ix.content?.trim() || "";
     items.push({
       id: ix.id,
-      when: ix.created_at || "",
-      title: ix.summary?.trim() || "Follow-up recorded",
-      detail: ix.body?.trim() || undefined,
-      badge: [ix.channel, ix.direction].filter(Boolean).join(" · ") || undefined,
+      when: ix.occurred_at || "",
+      title: dir ? `${dir} ${label.toLowerCase()}` : label,
+      detail: content ? truncate(content) : undefined,
+      badge: label,
     });
   }
 

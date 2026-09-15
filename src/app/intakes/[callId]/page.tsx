@@ -15,7 +15,7 @@ import { IntakeHeader } from "@/components/intake/IntakeHeader";
 import { CaseOverviewCard } from "@/components/intake/CaseOverviewCard";
 import { MissingInformationCard } from "@/components/intake/MissingInformationCard";
 import { IntakeSection } from "@/components/intake/IntakeSection";
-import { TranscriptAccordion } from "@/components/intake/TranscriptAccordion";
+import { CallsList } from "@/components/intake/CallsList";
 import { InternalNotes } from "@/components/intake/InternalNotes";
 import { ActivityTimeline } from "@/components/intake/ActivityTimeline";
 
@@ -197,7 +197,7 @@ export default function IntakeDetailPage() {
               ))}
             </section>
 
-            <TranscriptAccordion intake={intake} />
+            <CallsList intake={intake} interactions={interactions} />
 
             <InternalNotes
               intake={intake}
