@@ -365,14 +365,19 @@ function buildPatchBody(params: {
         d.setHours(d.getHours() + 1);
         return d.toISOString();
       })();
-    body.start = { dateTime: params.startDateTime, timeZone: tz };
-    body.end = { dateTime: end, timeZone: tz };
+    // PATCH merges into the stored start/end: null the other form or all-day ↔ timed edits are rejected.
+    body.start = { date: null, dateTime: params.startDateTime, timeZone: tz };
+    body.end = { date: null, dateTime: end, timeZone: tz };
   } else if (params.dateIso !== undefined) {
     const day = params.dateIso;
     const lastRaw = (params.allDayLastInclusive ?? day).trim() || day;
     const lastInclusive = lastRaw < day ? day : lastRaw;
-    body.start = { date: day };
-    body.end = { date: format(addDays(parseISO(lastInclusive), 1), "yyyy-MM-dd") };
+    body.start = { date: day, dateTime: null, timeZone: null };
+    body.end = {
+      date: format(addDays(parseISO(lastInclusive), 1), "yyyy-MM-dd"),
+      dateTime: null,
+      timeZone: null,
+    };
   }
   if (params.reminderMinutes?.length) {
     body.reminders = {
@@ -515,7 +520,8 @@ export async function patchGoogleEvent(params: {
   scheduleKind?: "deadline" | "meeting";
   /** Omit = leave color; null = default color; else palette id. */
   googleColorId?: string | null;
-}): Promise<void> {
+}): Promise<{ failedEmails: string[] }> {
+  const failedEmails: string[] = [];
   const patchBody = buildPatchBody({
     summary: params.summary,
     description: params.description,
@@ -530,20 +536,21 @@ export async function patchGoogleEvent(params: {
     location: params.location,
     colorId: colorIdForGooglePatch(params.googleColorId),
   });
-  if (Object.keys(patchBody).length === 0) return;
+  if (Object.keys(patchBody).length === 0) return { failedEmails };
 
   if (params.scheduleKind === "meeting") {
     const organizer = getMeetingOrganizerEmail();
     const orgLower = organizer.toLowerCase();
     const eventId =
       params.idsByEmail?.[orgLower] ?? params.googleEventId ?? Object.values(params.idsByEmail ?? {})[0];
-    if (!eventId) return;
+    if (!eventId) return { failedEmails };
     try {
       await patchCalendarEventForUser(organizer, eventId, patchBody, "all");
     } catch (err) {
       console.warn("[calendar] Patch failed for meeting", err);
+      failedEmails.push(orgLower);
     }
-    return;
+    return { failedEmails };
   }
 
   const defaultUser = getDefaultUser();
@@ -559,8 +566,10 @@ export async function patchGoogleEvent(params: {
       await patchCalendarEventForUser(email, eventId, patchBody);
     } catch (err) {
       console.warn("[calendar] Patch failed for", email, err);
+      failedEmails.push(email);
     }
   }
+  return { failedEmails };
 }
 
 /** Delete one calendar row (legacy) or every stored copy for the team */

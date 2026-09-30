@@ -243,6 +243,40 @@ export async function findCaseByCaseNumber(
   return caseFromRow(data[0] as Record<string, unknown>);
 }
 
+export async function fetchCasesByIds(
+  supabase: SupabaseClient,
+  caseIds: string[]
+): Promise<Case[]> {
+  const ids = [...new Set(caseIds.filter((id) => UUID_RE.test(id)))];
+  const acc: Case[] = [];
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await supabase
+      .from("cases")
+      .select("*")
+      .in("id", ids.slice(i, i + 200));
+    if (error) throw error;
+    for (const r of data ?? []) acc.push(caseFromRow(r as Record<string, unknown>));
+  }
+  return acc;
+}
+
+/** Cases where the contact is an assignee or the optional event attorney. */
+export async function fetchCasesForContact(
+  supabase: SupabaseClient,
+  contactId: string,
+  opts: { activeOnly?: boolean } = {}
+): Promise<Case[]> {
+  if (!UUID_RE.test(contactId)) return [];
+  let q = supabase
+    .from("cases")
+    .select("*")
+    .or(`assigned_contact_ids.cs.{${contactId}},event_attorney_contact_id.eq.${contactId}`);
+  if (opts.activeOnly) q = q.eq("status", "active");
+  const { data, error } = await q;
+  if (error) throw error;
+  return (data ?? []).map((r) => caseFromRow(r as Record<string, unknown>));
+}
+
 function slackChannelFromRow(r: Record<string, unknown>): CaseSlackChannel {
   return {
     caseNumber: String(r.case_number ?? ""),
@@ -871,6 +905,51 @@ export async function fetchEventsForCase(
     for (const r of page) acc.push(eventFromRow(r));
     if (page.length < POSTGREST_PAGE_SIZE) break;
     from += POSTGREST_PAGE_SIZE;
+  }
+  return acc;
+}
+
+/** Full row (all columns) — safe to pass back into {@link saveEvent} without dropping fields. */
+export async function fetchEventById(
+  supabase: SupabaseClient,
+  eventId: string
+): Promise<CalendarEvent | null> {
+  if (!UUID_RE.test(eventId.trim())) return null;
+  const { data, error } = await supabase
+    .from("case_events")
+    .select("*")
+    .eq("id", eventId.trim())
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return eventFromRow(data as Record<string, unknown>);
+}
+
+/** All columns for events on the given cases whose span overlaps [from, to] (either bound optional). */
+export async function fetchFullEventsForCases(
+  supabase: SupabaseClient,
+  caseIds: string[],
+  opts: { from?: string; to?: string } = {}
+): Promise<CalendarEvent[]> {
+  const ids = [...new Set(caseIds.filter((id) => UUID_RE.test(id)))];
+  const acc: CalendarEvent[] = [];
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    let from = 0;
+    for (;;) {
+      let q = supabase.from("case_events").select("*").in("case_id", chunk);
+      if (opts.from) q = q.or(`date.gte.${opts.from},deadline_end_date.gte.${opts.from}`);
+      if (opts.to) q = q.lte("date", opts.to);
+      const { data, error } = await q
+        .order("date", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, from + POSTGREST_PAGE_SIZE - 1);
+      if (error) throw error;
+      const page = (data ?? []) as Record<string, unknown>[];
+      for (const r of page) acc.push(eventFromRow(r));
+      if (page.length < POSTGREST_PAGE_SIZE) break;
+      from += POSTGREST_PAGE_SIZE;
+    }
   }
   return acc;
 }
