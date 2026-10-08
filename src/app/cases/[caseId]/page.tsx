@@ -15,6 +15,8 @@ import {
   caseContactDisplayLabel,
   caseContactSlotsFromCase,
   contactByIdMap,
+  assignedContactIdOrEmpty,
+  NOT_ASSIGNED_CONTACT_ID,
 } from "@/lib/case-attorneys";
 import { slackChannelLabel, slackChannelUrl } from "@/lib/slack-channel";
 import { buildCalendarBatches, googleCalendarDescription, hasGoogleCalendarSync } from "@/lib/calendar-payload";
@@ -979,10 +981,12 @@ export default function CaseDetailPage() {
   async function saveReassign() {
     if (!caseId || !c || !user) return;
     if (!reassignMainAttorneyId || !reassignParalegalId) {
-      setMsg("Main attorney and paralegal are required.");
+      setMsg("Choose a main attorney and paralegal, or Not assigned.");
       return;
     }
-    if (reassignEventAttorneyId && reassignEventAttorneyId === reassignMainAttorneyId) {
+    const mainAttorneyId = assignedContactIdOrEmpty(reassignMainAttorneyId);
+    const caseParalegalId = assignedContactIdOrEmpty(reassignParalegalId);
+    if (reassignEventAttorneyId && reassignEventAttorneyId === mainAttorneyId) {
       setMsg("Event attorney must be different from the main attorney.");
       return;
     }
@@ -999,20 +1003,20 @@ export default function CaseDetailPage() {
       const extraIds = reassignExtraIds.filter(
         (id) =>
           id &&
-          id !== reassignMainAttorneyId &&
-          id !== reassignParalegalId &&
+          id !== mainAttorneyId &&
+          id !== caseParalegalId &&
           id !== reassignLegalAssistantId
       );
       const newContactIds = buildCaseAssignedContactIds({
-        responsibleAttorneyId: reassignMainAttorneyId,
-        paralegalId: reassignParalegalId,
+        responsibleAttorneyId: mainAttorneyId,
+        paralegalId: caseParalegalId,
         legalAssistantId: reassignLegalAssistantId,
         extraIds,
         contactById,
       });
       await updateCase(supabase, caseId, {
         assignedContactIds: newContactIds,
-        responsibleAttorneyContactId: reassignMainAttorneyId,
+        responsibleAttorneyContactId: mainAttorneyId || null,
         eventAttorneyContactId: reassignEventAttorneyId || null,
       });
       const attendeeContactIds = caseCalendarInviteContactIds({
@@ -1458,9 +1462,9 @@ export default function CaseDetailPage() {
                   return;
                 }
                 const slots = caseContactSlotsFromCase(c, contactById);
-                setReassignMainAttorneyId(slots.responsibleAttorneyId);
+                setReassignMainAttorneyId(slots.responsibleAttorneyId || NOT_ASSIGNED_CONTACT_ID);
                 setReassignEventAttorneyId(slots.eventAttorneyId);
-                setReassignParalegalId(slots.paralegalId);
+                setReassignParalegalId(slots.paralegalId || NOT_ASSIGNED_CONTACT_ID);
                 setReassignLegalAssistantId(slots.legalAssistantId);
                 setReassignExtraIds(slots.extraIds);
                 setShowReassign(true);
@@ -1512,6 +1516,7 @@ export default function CaseDetailPage() {
                   onChange={(e) => setReassignMainAttorneyId(e.target.value)}
                 >
                   <option value="">Select…</option>
+                  <option value={NOT_ASSIGNED_CONTACT_ID}>Not assigned</option>
                   {attorneys.map((ct) => (
                     <option key={ct.id} value={ct.id}>{ct.name}</option>
                   ))}
@@ -1543,6 +1548,7 @@ export default function CaseDetailPage() {
                   onChange={(e) => setReassignParalegalId(e.target.value)}
                 >
                   <option value="">Select…</option>
+                  <option value={NOT_ASSIGNED_CONTACT_ID}>Not assigned</option>
                   {paralegals.map((ct) => (
                     <option key={ct.id} value={ct.id}>{ct.name}</option>
                   ))}

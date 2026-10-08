@@ -14,7 +14,11 @@ import {
   digitsOnlyCaseNumberInput,
   isValidNumericCaseNumber,
 } from "@/lib/case-display";
-import { buildCaseAssignedContactIds } from "@/lib/case-attorneys";
+import {
+  assignedContactIdOrEmpty,
+  buildCaseAssignedContactIds,
+  NOT_ASSIGNED_CONTACT_ID,
+} from "@/lib/case-attorneys";
 import { parseDisplayDate } from "@/lib/date-input-format";
 import { formatUsPhoneDisplay, normalizeUsPhoneToE164 } from "@/lib/phone-format";
 import { postQuoContactSync } from "@/lib/quo-client";
@@ -182,16 +186,18 @@ export default function NewCasePage() {
       return;
     }
     if (!attorneyId || !paralegalId) {
-      setErr("Main attorney and paralegal are required.");
+      setErr("Choose a main attorney and paralegal, or Not assigned.");
       return;
     }
-    if (eventAttorneyId && eventAttorneyId === attorneyId) {
+    const mainAttorneyId = assignedContactIdOrEmpty(attorneyId);
+    const caseParalegalId = assignedContactIdOrEmpty(paralegalId);
+    if (eventAttorneyId && eventAttorneyId === mainAttorneyId) {
       setErr("Event attorney must be different from the main attorney.");
       return;
     }
-    const attorney = contacts.find((c) => c.id === attorneyId);
-    const paralegal = contacts.find((c) => c.id === paralegalId);
-    if (!attorney?.email || !paralegal?.email) {
+    const attorney = mainAttorneyId ? contacts.find((c) => c.id === mainAttorneyId) : undefined;
+    const paralegal = caseParalegalId ? contacts.find((c) => c.id === caseParalegalId) : undefined;
+    if ((mainAttorneyId && !attorney?.email) || (caseParalegalId && !paralegal?.email)) {
       setErr("Selected attorney and paralegal must have the email/ID field filled on their contact (use a real email for Google).");
       return;
     }
@@ -233,14 +239,14 @@ export default function NewCasePage() {
       const extraIds = extraAssigneeIds.filter(
         (id) =>
           id &&
-          id !== attorneyId &&
+          id !== mainAttorneyId &&
           id !== eventAttorneyId &&
-          id !== paralegalId &&
+          id !== caseParalegalId &&
           id !== legalAssistantId
       );
       const assignedContactIds = buildCaseAssignedContactIds({
-        responsibleAttorneyId: attorneyId,
-        paralegalId,
+        responsibleAttorneyId: mainAttorneyId,
+        paralegalId: caseParalegalId,
         legalAssistantId,
         extraIds,
         contactById,
@@ -265,7 +271,7 @@ export default function NewCasePage() {
         caseType,
         preferredLanguage,
         secondaryLanguage: secondaryLanguage || null,
-        responsibleAttorneyContactId: attorneyId,
+        responsibleAttorneyContactId: mainAttorneyId || null,
         eventAttorneyContactId: eventAttorneyId || null,
         assignedContactIds,
       });
@@ -681,6 +687,7 @@ export default function NewCasePage() {
               <Label required>Main attorney</Label>
               <Select className="mt-1.5" value={attorneyId} onChange={(e) => setAttorneyId(e.target.value)} required>
                 <option value="">Select…</option>
+                <option value={NOT_ASSIGNED_CONTACT_ID}>Not assigned</option>
                 {attorneys.map((c) => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
@@ -708,6 +715,7 @@ export default function NewCasePage() {
               <Label required>Paralegal</Label>
               <Select className="mt-1.5" value={paralegalId} onChange={(e) => setParalegalId(e.target.value)} required>
                 <option value="">Select…</option>
+                <option value={NOT_ASSIGNED_CONTACT_ID}>Not assigned</option>
                 {paralegals.map((c) => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}

@@ -1,5 +1,12 @@
 import type { CalendarEvent, Case, Contact } from "@/lib/types";
 
+/** Select value for an explicit "Not assigned" main attorney / paralegal (distinct from no choice yet). */
+export const NOT_ASSIGNED_CONTACT_ID = "__not_assigned__";
+
+export function assignedContactIdOrEmpty(selectValue: string): string {
+  return selectValue === NOT_ASSIGNED_CONTACT_ID ? "" : selectValue;
+}
+
 export function contactByIdMap(contacts: Contact[]): Map<string, Contact> {
   return new Map(contacts.map((c) => [c.id, c]));
 }
