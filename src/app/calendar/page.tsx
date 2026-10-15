@@ -79,6 +79,10 @@ function formatWhen(e: CalendarEvent): string {
   return format(parseISO(e.date), "EEEE, MMM d, yyyy");
 }
 
+function eventLastDay(e: CalendarEvent): string {
+  return !e.startDateTime && e.deadlineEndDate && e.deadlineEndDate > e.date ? e.deadlineEndDate : e.date;
+}
+
 function eventKindLabel(kind: CalendarEvent["eventKind"]): string | null {
   return eventKindDisplayLabel(kind);
 }
@@ -214,9 +218,12 @@ export default function CalendarPage() {
 
   const filteredSorted = useMemo(() => {
     const q = search.trim().toLowerCase();
+    const localToday = format(new Date(), "yyyy-MM-dd");
     const list = rows.filter(({ event: e, case: c }) => {
       if (c.status !== "active") return false;
-      if (!e.included || e.noiseFlag || e.completed) return false;
+      if (!e.included || e.noiseFlag) return false;
+      // Past events are usually auto-completed; keep them visible as history, hide completed upcoming ones.
+      if (e.completed && eventLastDay(e) >= localToday) return false;
       if (!caseMatchesAssignedRole(c, attorneyFilterIds, "attorney", contactById)) return false;
       if (!caseMatchesAssignedRole(c, paralegalFilterIds, "paralegal", contactById)) return false;
       if (!caseMatchesAssignedRole(c, legalAssistantFilterIds, "legal_assistant", contactById))
@@ -467,6 +474,30 @@ export default function CalendarPage() {
                   Reset
                 </button>
               </div>
+              <div className="flex flex-wrap gap-2">
+                {(
+                  [
+                    ["Past 30 days", -30, -1],
+                    ["Past 90 days", -90, -1],
+                    ["Last 30 + next 30", -30, 30],
+                    ["Next 30 days", 0, 29],
+                  ] as const
+                ).map(([label, fromOffset, toOffset]) => (
+                  <button
+                    key={label}
+                    type="button"
+                    className="rounded-full border border-border px-2.5 py-1 text-xs font-medium text-text-secondary hover:border-primary/40 hover:text-primary"
+                    onClick={() => {
+                      const now = new Date();
+                      setTimelineStart(format(addDays(now, fromOffset), "yyyy-MM-dd"));
+                      setTimelineEnd(format(addDays(now, toOffset), "yyyy-MM-dd"));
+                      setViewMode("timeline");
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label>From</Label>
@@ -608,13 +639,18 @@ export default function CalendarPage() {
             const kind = eventKindLabel(e.eventKind);
             return (
               <Link key={`${c.id}-${e.id}`} href={`/cases/${c.id}`} prefetch={false}>
-                <Card className="transition-shadow hover:shadow-md">
+                <Card className={`transition-shadow hover:shadow-md ${e.completed ? "opacity-70" : ""}`}>
                   <CardBody className="py-4!">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0 flex-1 space-y-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <h2 className="text-base font-semibold text-text">{e.title}</h2>
                           <Badge variant={categoryBadgeVariant(e.category)}>{e.category}</Badge>
+                          {e.completed && (
+                            <span className="rounded-md bg-surface-alt px-2 py-0.5 text-xs font-medium text-text-muted">
+                              Completed
+                            </span>
+                          )}
                           {isGoogleIcsMirrorEvent(e) && (
                             <span className="rounded-md bg-surface-alt px-2 py-0.5 text-xs font-medium text-text-secondary">
                               Originally from Google
