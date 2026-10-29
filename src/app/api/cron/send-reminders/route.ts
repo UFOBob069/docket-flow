@@ -20,7 +20,7 @@ export async function GET(req: Request): Promise<Response> {
   const supabase = createServiceRoleClient();
   if (!supabase) {
     return NextResponse.json(
-      { error: "SUPABASE_SERVICE_ROLE_KEY not configured" },
+      { error: "SUPABASE_SECRET_KEY (or legacy SUPABASE_SERVICE_ROLE_KEY) not configured" },
       { status: 503 }
     );
   }

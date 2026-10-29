@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { supabasePublishableKey, supabaseUrl } from "@/lib/supabase/env";
 
 /** Dedupe + normalize emails for calendar recipient lists. */
 export function mergeAttendeeEmailLists(...lists: string[][]): string[] {
@@ -38,11 +39,11 @@ export async function fetchAllFirmEventsContactEmails(
   authorizationHeader: string | null
 ): Promise<string[]> {
   if (!authorizationHeader?.startsWith("Bearer ")) return [];
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !anon) return [];
+  const url = supabaseUrl();
+  const publishable = supabasePublishableKey();
+  if (!url || !publishable) return [];
 
-  const supabase = createClient(url, anon, {
+  const supabase = createClient(url, publishable, {
     global: { headers: { Authorization: authorizationHeader } },
   });
 

@@ -507,7 +507,7 @@ export default function DashboardPage() {
         <h1 className="text-3xl font-semibold">DocketFlow</h1>
         <p className="mt-3 text-text-muted">
           Add <code className="rounded bg-surface-alt px-1.5 py-0.5 text-sm font-mono text-primary">NEXT_PUBLIC_SUPABASE_URL</code> and{" "}
-          <code className="rounded bg-surface-alt px-1.5 py-0.5 text-sm font-mono text-primary">NEXT_PUBLIC_SUPABASE_ANON_KEY</code> to{" "}
+          <code className="rounded bg-surface-alt px-1.5 py-0.5 text-sm font-mono text-primary">NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code> to{" "}
           <code className="rounded bg-surface-alt px-1.5 py-0.5 text-sm font-mono text-primary">.env.local</code> to run the app.
         </p>
       </PageWrapper>
