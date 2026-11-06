@@ -117,6 +117,7 @@ export async function resolveCaller(
         role: contactRow.role as Contact["role"],
         teamCalendarScope:
           contactRow.team_calendar_scope === "all_firm_events" ? "all_firm_events" : "assigned_cases",
+        availableForNewCases: contactRow.available_for_new_cases !== false,
         createdAt: Number(contactRow.created_at),
         updatedAt: Number(contactRow.updated_at),
       }

@@ -88,7 +88,13 @@ export default function ContactsPage() {
     setSaving(true);
     try {
       const supabase = getBrowserSupabase();
-      await addContact(supabase, user.id, { name, email, role, teamCalendarScope });
+      await addContact(supabase, user.id, {
+        name,
+        email,
+        role,
+        teamCalendarScope,
+        availableForNewCases: true,
+      });
       setName("");
       setEmail("");
       setRole("paralegal");
@@ -108,6 +114,11 @@ export default function ContactsPage() {
   async function onCalendarScopeChange(c: Contact, s: TeamCalendarScope) {
     const supabase = getBrowserSupabase();
     await updateContact(supabase, c.id, { teamCalendarScope: s });
+  }
+
+  async function onNewCaseAvailabilityChange(c: Contact, available: boolean) {
+    const supabase = getBrowserSupabase();
+    await updateContact(supabase, c.id, { availableForNewCases: available });
   }
 
   async function onDelete(c: Contact) {
@@ -130,7 +141,7 @@ export default function ContactsPage() {
     <PageWrapper>
       <PageHeader
         title="Contacts"
-        subtitle="Team members for case assignment and Google Calendar copies. “All firm events” is merged on every sync (deduped if they are already on the case)."
+        subtitle="Team members for case assignment and Google Calendar copies. “All firm events” is merged on every sync. “Hidden from new cases” keeps them on existing cases but removes them from new-case pickers."
       />
 
       <Card className="mt-8">
@@ -227,6 +238,9 @@ export default function ContactsPage() {
                   <div className="flex items-center gap-2">
                     <p className="truncate text-sm font-semibold text-text">{c.name}</p>
                     <Badge variant={roleBadge[c.role]}>{roleLabel[c.role]}</Badge>
+                    {c.availableForNewCases === false && (
+                      <Badge variant="default">Hidden from new cases</Badge>
+                    )}
                   </div>
                   <p className="truncate text-sm text-text-muted">{c.email}</p>
                 </div>
@@ -243,6 +257,17 @@ export default function ContactsPage() {
                         {roleLabel[r]}
                       </option>
                     ))}
+                  </Select>
+                  <Select
+                    className="w-auto min-w-52 text-xs"
+                    title="Whether this person can be chosen when creating or reassigning a case"
+                    value={c.availableForNewCases === false ? "hidden" : "available"}
+                    onChange={(e) =>
+                      void onNewCaseAvailabilityChange(c, e.target.value === "available")
+                    }
+                  >
+                    <option value="available">Available for new cases</option>
+                    <option value="hidden">Hidden from new cases</option>
                   </Select>
                   <Select
                     className="w-auto min-w-56 text-xs"

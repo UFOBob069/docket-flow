@@ -104,6 +104,8 @@ export interface Contact {
   role: ContactRole;
   /** Default: only when assigned on the case; `all_firm_events` merges into every team calendar sync. */
   teamCalendarScope: TeamCalendarScope;
+  /** When false, kept on existing cases but hidden from new-case and reassignment pickers. */
+  availableForNewCases: boolean;
   createdAt: number;
   updatedAt: number;
 }

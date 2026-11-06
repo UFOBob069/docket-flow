@@ -17,6 +17,7 @@ import { adjustSolWeekendToFriday, statuteLimitDateIsoForCalendar } from "@/lib/
 import { DEFAULT_REMINDERS } from "@/lib/reminder-presets";
 import { buildSolMilestoneSpecs } from "@/lib/sol-milestones";
 import { digitsOnlyCaseNumberInput, isValidNumericCaseNumber } from "@/lib/case-display";
+import { assignmentContacts } from "@/lib/case-attorneys";
 import type { Contact } from "@/lib/types";
 import { useIntakeApi } from "@/hooks/useIntakeApi";
 import { useHydrated } from "@/hooks/useHydrated";
@@ -120,10 +121,10 @@ export default function PromoteIntakePage() {
     if (!loading && supabaseReady && !user) router.replace("/login");
   }, [user, loading, supabaseReady, router]);
 
-  const attorneys = useMemo(() => contacts.filter((c) => c.role === "attorney"), [contacts]);
-  const paralegals = useMemo(() => contacts.filter((c) => c.role === "paralegal"), [contacts]);
+  const attorneys = useMemo(() => assignmentContacts(contacts, "attorney"), [contacts]);
+  const paralegals = useMemo(() => assignmentContacts(contacts, "paralegal"), [contacts]);
   const legalAssistants = useMemo(
-    () => contacts.filter((c) => c.role === "legal_assistant"),
+    () => assignmentContacts(contacts, "legal_assistant"),
     [contacts]
   );
 

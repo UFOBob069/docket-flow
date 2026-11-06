@@ -190,6 +190,7 @@ function contactFromRow(r: Record<string, unknown>): Contact {
     email: r.email as string,
     role: r.role as Contact["role"],
     teamCalendarScope,
+    availableForNewCases: r.available_for_new_cases !== false,
     createdAt: Number(r.created_at),
     updatedAt: Number(r.updated_at),
   };
@@ -1461,6 +1462,7 @@ export async function addContact(
     email: input.email.trim(),
     role: input.role,
     team_calendar_scope: input.teamCalendarScope ?? "assigned_cases",
+    available_for_new_cases: input.availableForNewCases !== false,
     created_at: now,
     updated_at: now,
   });
@@ -1480,6 +1482,8 @@ export async function updateContact(
   if (patch.role !== undefined) row.role = patch.role;
   if (patch.teamCalendarScope !== undefined)
     row.team_calendar_scope = patch.teamCalendarScope;
+  if (patch.availableForNewCases !== undefined)
+    row.available_for_new_cases = patch.availableForNewCases;
   const { error } = await supabase.from("contacts").update(row).eq("id", contactId);
   if (error) throw error;
 }

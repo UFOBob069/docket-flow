@@ -16,7 +16,9 @@ import {
 } from "@/lib/case-display";
 import {
   assignedContactIdOrEmpty,
+  assignmentContacts,
   buildCaseAssignedContactIds,
+  contactAvailableForNewCases,
   NOT_ASSIGNED_CONTACT_ID,
 } from "@/lib/case-attorneys";
 import { parseDisplayDate } from "@/lib/date-input-format";
@@ -388,9 +390,9 @@ export default function NewCasePage() {
   }
   if (!user) return null;
 
-  const attorneys = contacts.filter((c) => c.role === "attorney");
-  const paralegals = contacts.filter((c) => c.role === "paralegal");
-  const legalAssistants = contacts.filter((c) => c.role === "legal_assistant");
+  const attorneys = assignmentContacts(contacts, "attorney");
+  const paralegals = assignmentContacts(contacts, "paralegal");
+  const legalAssistants = assignmentContacts(contacts, "legal_assistant");
 
   return (
     <PageWrapper className="max-w-[560px]">
@@ -773,6 +775,7 @@ export default function NewCasePage() {
                       {contacts
                         .filter(
                           (ct) =>
+                            contactAvailableForNewCases(ct) &&
                             ct.id !== attorneyId &&
                             ct.id !== eventAttorneyId &&
                             ct.id !== paralegalId &&

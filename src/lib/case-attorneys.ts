@@ -1,5 +1,29 @@
 import type { CalendarEvent, Case, Contact } from "@/lib/types";
 
+/** True unless the contact was marked hidden from new-case assignment. */
+export function contactAvailableForNewCases(
+  contact: Pick<Contact, "availableForNewCases">
+): boolean {
+  return contact.availableForNewCases !== false;
+}
+
+/**
+ * Role list for assignment dropdowns. Hidden contacts stay out unless they are already selected
+ * (so historic cases still show who is assigned).
+ */
+export function assignmentContacts<T extends Contact>(
+  contacts: T[],
+  role: Contact["role"],
+  keepIds: string[] = []
+): T[] {
+  const keep = new Set(keepIds.filter(Boolean));
+  return contacts
+    .filter(
+      (c) => c.role === role && (contactAvailableForNewCases(c) || keep.has(c.id))
+    )
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 /** Select value for an explicit "Not assigned" main attorney / paralegal (distinct from no choice yet). */
 export const NOT_ASSIGNED_CONTACT_ID = "__not_assigned__";
 

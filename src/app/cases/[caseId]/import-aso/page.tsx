@@ -14,6 +14,7 @@ import {
 import { DEFAULT_CASE_EVENT_KIND, getRemindersForEventKind } from "@/lib/case-event-kinds";
 import { extractedToCalendarEvents } from "@/lib/deadline-processing";
 import { caseDisplayName } from "@/lib/case-display";
+import { assignmentContacts, contactAvailableForNewCases } from "@/lib/case-attorneys";
 import { ALL_EVENT_KIND_SELECT_GROUPS, categoryForManualEventKind } from "@/lib/one-off-events";
 import {
   fetchEventsForCase,
@@ -503,12 +504,14 @@ export default function ImportAsoPage() {
     );
   }
 
-  const attorneys = contacts.filter((c) => c.role === "attorney");
-  const paralegals = contacts.filter((c) => c.role === "paralegal");
-  const legalAssistants = contacts.filter((c) => c.role === "legal_assistant");
-  const others = contacts.filter((c) => c.role === "other");
+  const attorneys = assignmentContacts(contacts, "attorney", [attorneyId]);
+  const paralegals = assignmentContacts(contacts, "paralegal", [paralegalId]);
+  const legalAssistants = assignmentContacts(contacts, "legal_assistant", [legalAssistantId]);
+  const others = assignmentContacts(contacts, "other", [otherId]);
   const alreadyPicked = new Set([attorneyId, paralegalId, legalAssistantId, otherId, ...extraContactIds].filter(Boolean));
-  const availableExtras = contacts.filter((c) => !alreadyPicked.has(c.id));
+  const availableExtras = contacts.filter(
+    (c) => contactAvailableForNewCases(c) && !alreadyPicked.has(c.id)
+  );
 
   return (
     <PageWrapper className="max-w-[960px]">

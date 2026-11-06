@@ -16,6 +16,8 @@ import {
   caseContactSlotsFromCase,
   contactByIdMap,
   assignedContactIdOrEmpty,
+  assignmentContacts,
+  contactAvailableForNewCases,
   NOT_ASSIGNED_CONTACT_ID,
 } from "@/lib/case-attorneys";
 import { slackChannelLabel, slackChannelUrl } from "@/lib/slack-channel";
@@ -250,21 +252,6 @@ export default function CaseDetailPage() {
     eventIdsInMonth.length > 0 && eventIdsInMonth.every((id) => selected.has(id));
 
   const contactById = useMemo(() => contactByIdMap(contacts), [contacts]);
-  const attorneys = useMemo(
-    () => contacts.filter((ct) => ct.role === "attorney").sort((a, b) => a.name.localeCompare(b.name)),
-    [contacts]
-  );
-  const paralegals = useMemo(
-    () => contacts.filter((ct) => ct.role === "paralegal").sort((a, b) => a.name.localeCompare(b.name)),
-    [contacts]
-  );
-  const legalAssistants = useMemo(
-    () =>
-      contacts
-        .filter((ct) => ct.role === "legal_assistant")
-        .sort((a, b) => a.name.localeCompare(b.name)),
-    [contacts]
-  );
 
   const eventKindSelectGroups = useMemo(
     () => augmentKindGroupsForEdit(ALL_EVENT_KIND_SELECT_GROUPS, editing?.eventKind),
@@ -1517,7 +1504,7 @@ export default function CaseDetailPage() {
                 >
                   <option value="">Select…</option>
                   <option value={NOT_ASSIGNED_CONTACT_ID}>Not assigned</option>
-                  {attorneys.map((ct) => (
+                  {assignmentContacts(contacts, "attorney", [reassignMainAttorneyId]).map((ct) => (
                     <option key={ct.id} value={ct.id}>{ct.name}</option>
                   ))}
                 </Select>
@@ -1530,7 +1517,7 @@ export default function CaseDetailPage() {
                   onChange={(e) => setReassignEventAttorneyId(e.target.value)}
                 >
                   <option value="">None</option>
-                  {attorneys
+                  {assignmentContacts(contacts, "attorney", [reassignEventAttorneyId])
                     .filter((ct) => ct.id !== reassignMainAttorneyId)
                     .map((ct) => (
                       <option key={ct.id} value={ct.id}>{ct.name}</option>
@@ -1549,7 +1536,7 @@ export default function CaseDetailPage() {
                 >
                   <option value="">Select…</option>
                   <option value={NOT_ASSIGNED_CONTACT_ID}>Not assigned</option>
-                  {paralegals.map((ct) => (
+                  {assignmentContacts(contacts, "paralegal", [reassignParalegalId]).map((ct) => (
                     <option key={ct.id} value={ct.id}>{ct.name}</option>
                   ))}
                 </Select>
@@ -1562,7 +1549,7 @@ export default function CaseDetailPage() {
                   onChange={(e) => setReassignLegalAssistantId(e.target.value)}
                 >
                   <option value="">None</option>
-                  {legalAssistants.map((ct) => (
+                  {assignmentContacts(contacts, "legal_assistant", [reassignLegalAssistantId]).map((ct) => (
                     <option key={ct.id} value={ct.id}>{ct.name}</option>
                   ))}
                 </Select>
@@ -1588,6 +1575,7 @@ export default function CaseDetailPage() {
                         {contacts
                           .filter(
                             (ct) =>
+                              (contactAvailableForNewCases(ct) || ct.id === rid) &&
                               ct.id !== reassignMainAttorneyId &&
                               ct.id !== reassignParalegalId &&
                               ct.id !== reassignLegalAssistantId &&
