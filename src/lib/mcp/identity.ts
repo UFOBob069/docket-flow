@@ -109,18 +109,30 @@ export async function resolveCaller(
   if (contactErr) throw contactErr;
 
   const contact: Contact | null = contactRow
-    ? {
-        id: contactRow.id as string,
-        ownerId: contactRow.user_id as string,
-        name: contactRow.name as string,
-        email: contactRow.email as string,
-        role: contactRow.role as Contact["role"],
-        teamCalendarScope:
-          contactRow.team_calendar_scope === "all_firm_events" ? "all_firm_events" : "assigned_cases",
-        availableForNewCases: contactRow.available_for_new_cases !== false,
-        createdAt: Number(contactRow.created_at),
-        updatedAt: Number(contactRow.updated_at),
-      }
+    ? (() => {
+        const primary = contactRow.role as Contact["role"];
+        const rawRoles = Array.isArray(contactRow.roles)
+          ? (contactRow.roles as string[])
+          : [];
+        const roles = (
+          rawRoles.length ? rawRoles : primary ? [primary] : ["other"]
+        ).filter(Boolean) as Contact["roles"];
+        return {
+          id: contactRow.id as string,
+          ownerId: contactRow.user_id as string,
+          name: contactRow.name as string,
+          email: contactRow.email as string,
+          role: primary,
+          roles: roles.includes(primary) ? roles : [primary, ...roles],
+          teamCalendarScope:
+            contactRow.team_calendar_scope === "all_firm_events"
+              ? "all_firm_events"
+              : "assigned_cases",
+          availableForNewCases: contactRow.available_for_new_cases !== false,
+          createdAt: Number(contactRow.created_at),
+          updatedAt: Number(contactRow.updated_at),
+        };
+      })()
     : null;
 
   type Profile = { display_name: string | null; staff_label: string | null };
