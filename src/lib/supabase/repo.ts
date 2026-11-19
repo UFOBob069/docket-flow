@@ -183,12 +183,22 @@ function contactFromRow(r: Record<string, unknown>): Contact {
   const scope = r.team_calendar_scope as string | undefined;
   const teamCalendarScope: Contact["teamCalendarScope"] =
     scope === "all_firm_events" ? "all_firm_events" : "assigned_cases";
+  const primary = r.role as Contact["role"];
+  const rawRoles = Array.isArray(r.roles) ? (r.roles as string[]) : [];
+  const roles = (
+    rawRoles.length
+      ? rawRoles
+      : primary
+        ? [primary]
+        : ["other"]
+  ).filter(Boolean) as Contact["roles"];
   return {
     id: r.id as string,
     ownerId: r.user_id as string,
     name: r.name as string,
     email: r.email as string,
-    role: r.role as Contact["role"],
+    role: primary,
+    roles: roles.includes(primary) ? roles : [primary, ...roles],
     teamCalendarScope,
     availableForNewCases: r.available_for_new_cases !== false,
     createdAt: Number(r.created_at),
@@ -1456,11 +1466,16 @@ export async function addContact(
   input: Omit<Contact, "id" | "ownerId" | "createdAt" | "updatedAt">
 ): Promise<string> {
   const now = Date.now();
+  const roles =
+    input.roles?.length && input.roles.includes(input.role)
+      ? input.roles
+      : [input.role, ...(input.roles ?? [])].filter(Boolean);
   const row = clean({
     user_id: ownerId,
     name: input.name.trim(),
     email: input.email.trim(),
     role: input.role,
+    roles: [...new Set(roles)],
     team_calendar_scope: input.teamCalendarScope ?? "assigned_cases",
     available_for_new_cases: input.availableForNewCases !== false,
     created_at: now,
@@ -1480,6 +1495,15 @@ export async function updateContact(
   if (patch.name !== undefined) row.name = patch.name;
   if (patch.email !== undefined) row.email = patch.email;
   if (patch.role !== undefined) row.role = patch.role;
+  if (patch.roles !== undefined) {
+    const roles = patch.roles.length
+      ? patch.roles
+      : patch.role
+        ? [patch.role]
+        : [];
+    row.roles = roles;
+    if (patch.role === undefined && roles[0]) row.role = roles[0];
+  }
   if (patch.teamCalendarScope !== undefined)
     row.team_calendar_scope = patch.teamCalendarScope;
   if (patch.availableForNewCases !== undefined)

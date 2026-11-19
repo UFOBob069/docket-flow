@@ -8,6 +8,7 @@ import { useAuth } from "@/context/AuthContext";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { getBrowserSupabase } from "@/lib/supabase/singleton";
 import { caseMatchesAssignedRole } from "@/lib/case-assigned-filter";
+import { hasContactRole } from "@/lib/contact-roles";
 import {
   CASE_STAGE_FILTER_OPTIONS,
   caseMatchesStageFilters,
@@ -264,17 +265,17 @@ export default function CasesListPage() {
   }, [contacts]);
 
   const attorneys = useMemo(
-    () => contacts.filter((ct) => ct.role === "attorney").sort((a, b) => a.name.localeCompare(b.name)),
+    () => contacts.filter((ct) => hasContactRole(ct, "attorney")).sort((a, b) => a.name.localeCompare(b.name)),
     [contacts]
   );
   const paralegals = useMemo(
-    () => contacts.filter((ct) => ct.role === "paralegal").sort((a, b) => a.name.localeCompare(b.name)),
+    () => contacts.filter((ct) => hasContactRole(ct, "paralegal")).sort((a, b) => a.name.localeCompare(b.name)),
     [contacts]
   );
   const legalAssistants = useMemo(
     () =>
       contacts
-        .filter((ct) => ct.role === "legal_assistant")
+        .filter((ct) => hasContactRole(ct, "legal_assistant"))
         .sort((a, b) => a.name.localeCompare(b.name)),
     [contacts]
   );

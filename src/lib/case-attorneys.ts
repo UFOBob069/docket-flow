@@ -1,3 +1,4 @@
+import { hasContactRole } from "@/lib/contact-roles";
 import type { CalendarEvent, Case, Contact } from "@/lib/types";
 
 /** True unless the contact was marked hidden from new-case assignment. */
@@ -19,7 +20,7 @@ export function assignmentContacts<T extends Contact>(
   const keep = new Set(keepIds.filter(Boolean));
   return contacts
     .filter(
-      (c) => c.role === role && (contactAvailableForNewCases(c) || keep.has(c.id))
+      (c) => hasContactRole(c, role) && (contactAvailableForNewCases(c) || keep.has(c.id))
     )
     .sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -47,7 +48,7 @@ export function inferResponsibleAttorneyContactId(
     return caseRecord.responsibleAttorneyContactId.trim();
   }
   for (const id of caseRecord.assignedContactIds) {
-    if (contactById.get(id)?.role === "attorney") return id;
+    if (hasContactRole(contactById.get(id), "attorney")) return id;
   }
   return null;
 }
@@ -60,7 +61,7 @@ export function inferParalegalContactId(
   contactById: Map<string, Contact>
 ): string | null {
   for (const id of caseRecord.assignedContactIds) {
-    if (contactById.get(id)?.role === "paralegal") return id;
+    if (hasContactRole(contactById.get(id), "paralegal")) return id;
   }
   return null;
 }
@@ -70,7 +71,7 @@ export function inferLegalAssistantContactId(
   contactById: Map<string, Contact>
 ): string | null {
   for (const id of caseRecord.assignedContactIds) {
-    if (contactById.get(id)?.role === "legal_assistant") return id;
+    if (hasContactRole(contactById.get(id), "legal_assistant")) return id;
   }
   return null;
 }
@@ -90,7 +91,7 @@ export function buildCaseAssignedContactIds(args: {
   const reserved = new Set([responsibleAttorneyId, paralegalId, legalAssistantId].filter(Boolean));
   const extras = extraIds.filter((id) => {
     if (!id?.trim() || reserved.has(id)) return false;
-    if (contactById?.get(id)?.role === "attorney") return false;
+    if (hasContactRole(contactById?.get(id), "attorney")) return false;
     return true;
   });
   return [...new Set([responsibleAttorneyId, paralegalId, legalAssistantId, ...extras].filter(Boolean))];
@@ -141,7 +142,7 @@ export function caseContactDisplayLabel(
   contactById: Map<string, Contact>
 ): "Main attorney" | null {
   const main = inferResponsibleAttorneyContactId(caseRecord, contactById);
-  if (contactId === main && contactById.get(contactId)?.role === "attorney") {
+  if (contactId === main && hasContactRole(contactById.get(contactId), "attorney")) {
     return "Main attorney";
   }
   return null;

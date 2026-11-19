@@ -101,7 +101,10 @@ export interface Contact {
   ownerId: string;
   name: string;
   email: string;
+  /** Primary role for display / legacy readers. */
   role: ContactRole;
+  /** Capability roles (checkbox set); includes primary. */
+  roles: ContactRole[];
   /** Default: only when assigned on the case; `all_firm_events` merges into every team calendar sync. */
   teamCalendarScope: TeamCalendarScope;
   /** When false, kept on existing cases but hidden from new-case and reassignment pickers. */

@@ -11,6 +11,12 @@ import {
   subscribeContacts,
   updateContact,
 } from "@/lib/supabase/repo";
+import {
+  CONTACT_CAPABILITY_ROLES,
+  contactRoleList,
+  hasContactRole,
+  withToggledContactRole,
+} from "@/lib/contact-roles";
 import type { Contact, ContactRole, TeamCalendarScope } from "@/lib/types";
 import { PageSkeleton } from "@/components/PageSkeleton";
 import { useHydrated } from "@/hooks/useHydrated";
@@ -28,7 +34,7 @@ import {
   Select,
 } from "@/components/ui";
 
-const roles: ContactRole[] = ["attorney", "paralegal", "legal_assistant", "other"];
+const roles: ContactRole[] = CONTACT_CAPABILITY_ROLES;
 
 const roleLabel: Record<ContactRole, string> = {
   attorney: "Attorney",
@@ -59,6 +65,7 @@ export default function ContactsPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<ContactRole>("paralegal");
+  const [rolesChecked, setRolesChecked] = useState<ContactRole[]>(["paralegal"]);
   const [teamCalendarScope, setTeamCalendarScope] = useState<TeamCalendarScope>("assigned_cases");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -88,16 +95,19 @@ export default function ContactsPage() {
     setSaving(true);
     try {
       const supabase = getBrowserSupabase();
+      const nextRoles = rolesChecked.includes(role) ? rolesChecked : [role, ...rolesChecked];
       await addContact(supabase, user.id, {
         name,
         email,
         role,
+        roles: [...new Set(nextRoles)],
         teamCalendarScope,
         availableForNewCases: true,
       });
       setName("");
       setEmail("");
       setRole("paralegal");
+      setRolesChecked(["paralegal"]);
       setTeamCalendarScope("assigned_cases");
     } catch (x) {
       setErr(x instanceof Error ? x.message : "Could not save contact");
@@ -106,9 +116,17 @@ export default function ContactsPage() {
     }
   }
 
-  async function onRoleChange(c: Contact, r: ContactRole) {
+  async function onPrimaryRoleChange(c: Contact, r: ContactRole) {
+    const rolesList = contactRoleList(c);
+    const nextRoles = rolesList.includes(r) ? rolesList : [r, ...rolesList];
     const supabase = getBrowserSupabase();
-    await updateContact(supabase, c.id, { role: r });
+    await updateContact(supabase, c.id, { role: r, roles: nextRoles });
+  }
+
+  async function onRoleToggle(c: Contact, r: ContactRole, enabled: boolean) {
+    const next = withToggledContactRole(c, r, enabled);
+    const supabase = getBrowserSupabase();
+    await updateContact(supabase, c.id, next);
   }
 
   async function onCalendarScopeChange(c: Contact, s: TeamCalendarScope) {
@@ -141,7 +159,7 @@ export default function ContactsPage() {
     <PageWrapper>
       <PageHeader
         title="Contacts"
-        subtitle="Team members for case assignment and Google Calendar copies. “All firm events” is merged on every sync. “Hidden from new cases” keeps them on existing cases but removes them from new-case pickers."
+        subtitle="Team members for case assignment and Google Calendar copies. Check every role a person can fill (e.g. paralegal + legal assistant). “All firm events” is merged on every sync. “Hidden from new cases” keeps them on existing cases but removes them from new-case pickers."
       />
 
       <Card className="mt-8">
@@ -175,14 +193,37 @@ export default function ContactsPage() {
                 placeholder="jane@firm.com or internal ID"
               />
             </div>
-            <div>
-              <Label>Role</Label>
+            <div className="sm:col-span-2 lg:col-span-2">
+              <Label>Roles</Label>
+              <div className="mt-1.5 flex flex-wrap gap-3">
+                {roles.map((r) => (
+                  <label key={r} className="flex items-center gap-1.5 text-xs text-text">
+                    <input
+                      type="checkbox"
+                      checked={rolesChecked.includes(r)}
+                      onChange={(e) => {
+                        const enabled = e.target.checked;
+                        setRolesChecked((current) => {
+                          const next = enabled
+                            ? [...new Set([...current, r])]
+                            : current.filter((value) => value !== r);
+                          const ensured = next.length ? next : [r];
+                          if (!ensured.includes(role)) setRole(ensured[0]!);
+                          return ensured;
+                        });
+                      }}
+                    />
+                    {roleLabel[r]}
+                  </label>
+                ))}
+              </div>
+              <Label className="mt-2">Primary</Label>
               <Select
                 className="mt-1.5"
                 value={role}
                 onChange={(e) => setRole(e.target.value as ContactRole)}
               >
-                {roles.map((r) => (
+                {rolesChecked.map((r) => (
                   <option key={r} value={r}>
                     {roleLabel[r]}
                   </option>
@@ -235,26 +276,43 @@ export default function ContactsPage() {
                 className="flex flex-col gap-3 px-6 py-4 sm:flex-row sm:items-center sm:justify-between"
               >
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <p className="truncate text-sm font-semibold text-text">{c.name}</p>
-                    <Badge variant={roleBadge[c.role]}>{roleLabel[c.role]}</Badge>
+                    {contactRoleList(c).map((r) => (
+                      <Badge key={r} variant={roleBadge[r]}>
+                        {roleLabel[r]}
+                      </Badge>
+                    ))}
                     {c.availableForNewCases === false && (
                       <Badge variant="default">Hidden from new cases</Badge>
                     )}
                   </div>
                   <p className="truncate text-sm text-text-muted">{c.email}</p>
+                  <div className="mt-2 flex flex-wrap gap-3">
+                    {roles.map((r) => (
+                      <label key={r} className="flex items-center gap-1.5 text-xs text-text-muted">
+                        <input
+                          type="checkbox"
+                          checked={hasContactRole(c, r)}
+                          onChange={(e) => void onRoleToggle(c, r, e.target.checked)}
+                        />
+                        {roleLabel[r]}
+                      </label>
+                    ))}
+                  </div>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-3">
                   <Select
                     className="w-auto min-w-44 text-xs"
                     value={c.role}
+                    title="Primary role"
                     onChange={(e) =>
-                      void onRoleChange(c, e.target.value as ContactRole)
+                      void onPrimaryRoleChange(c, e.target.value as ContactRole)
                     }
                   >
-                    {roles.map((r) => (
+                    {contactRoleList(c).map((r) => (
                       <option key={r} value={r}>
-                        {roleLabel[r]}
+                        Primary: {roleLabel[r]}
                       </option>
                     ))}
                   </Select>

@@ -1,3 +1,4 @@
+import { hasContactRole } from "./contact-roles";
 import type { Contact } from "./types";
 
 /** Any selected id must be assigned on the case with the given contact role (OR semantics). */
@@ -9,6 +10,6 @@ export function caseMatchesAssignedRole(
 ): boolean {
   if (!selectedIds.length) return true;
   return selectedIds.some(
-    (id) => c.assignedContactIds.includes(id) && contactById.get(id)?.role === role
+    (id) => c.assignedContactIds.includes(id) && hasContactRole(contactById.get(id), role)
   );
 }

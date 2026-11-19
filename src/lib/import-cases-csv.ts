@@ -1,3 +1,4 @@
+import { hasContactRole } from "./contact-roles";
 import type { Contact } from "./types";
 import { normalizePreferredLanguageInput } from "./preferred-languages";
 import type { PreferredLanguage } from "./preferred-languages";
@@ -112,7 +113,7 @@ function matchContactByName(
   role: "attorney" | "paralegal",
   contacts: Contact[]
 ): { id: string } | { error: string } {
-  const pool = contacts.filter((c) => c.role === role);
+  const pool = contacts.filter((c) => hasContactRole(c, role));
   const vKey = normName(v);
   if (!vKey) return { error: "empty" };
 
@@ -148,7 +149,7 @@ function resolveContactId(
 ): { id: string } | { error: string } {
   const v = value.trim().replace(/\s+/g, " ");
   if (!v) return { error: "empty" };
-  const pool = contacts.filter((c) => c.role === role);
+  const pool = contacts.filter((c) => hasContactRole(c, role));
   const lower = v.toLowerCase();
 
   if (opts.nameOnlyColumn) {

@@ -17,6 +17,7 @@ import { isGoogleIcsMirrorEvent } from "@/lib/calendar-event-origin";
 import { compareEventsBySchedule } from "@/lib/event-schedule";
 import { CALENDAR_TIMEZONE } from "@/lib/event-factory";
 import { caseMatchesAssignedRole } from "@/lib/case-assigned-filter";
+import { hasContactRole } from "@/lib/contact-roles";
 import { EVENT_KIND_FILTER_OPTIONS, eventKindDisplayLabel } from "@/lib/one-off-events";
 import type { CalendarEvent, Case, Contact, EventCategory, EventKind } from "@/lib/types";
 import { AddCalendarEventModal } from "@/components/AddCalendarEventModal";
@@ -194,10 +195,10 @@ export default function CalendarPage() {
     void loadEventsForRange();
   }, [loadEventsForRange]);
 
-  const attorneys = useMemo(() => contacts.filter((c) => c.role === "attorney"), [contacts]);
-  const paralegals = useMemo(() => contacts.filter((c) => c.role === "paralegal"), [contacts]);
+  const attorneys = useMemo(() => contacts.filter((c) => hasContactRole(c, "attorney")), [contacts]);
+  const paralegals = useMemo(() => contacts.filter((c) => hasContactRole(c, "paralegal")), [contacts]);
   const legalAssistants = useMemo(
-    () => contacts.filter((c) => c.role === "legal_assistant"),
+    () => contacts.filter((c) => hasContactRole(c, "legal_assistant")),
     [contacts]
   );
 

@@ -20,6 +20,7 @@ import {
 import { autoCompleteStaleEvents } from "@/lib/auto-complete-stale-events";
 import { ACTIVITY_ACTION_LABELS } from "@/lib/activity-labels";
 import { caseMatchesAssignedRole } from "@/lib/case-assigned-filter";
+import { hasContactRole } from "@/lib/contact-roles";
 import { EVENT_KIND_FILTER_OPTIONS } from "@/lib/one-off-events";
 import type { ActivityEntry, CalendarEvent, Case, Contact, EventKind } from "@/lib/types";
 import { deadlineInclusiveEndDate, shiftCalendarDays } from "@/lib/event-date-range";
@@ -382,10 +383,10 @@ export default function DashboardPage() {
     return m;
   }, [contacts]);
 
-  const attorneys = useMemo(() => contacts.filter((c) => c.role === "attorney"), [contacts]);
-  const paralegals = useMemo(() => contacts.filter((c) => c.role === "paralegal"), [contacts]);
+  const attorneys = useMemo(() => contacts.filter((c) => hasContactRole(c, "attorney")), [contacts]);
+  const paralegals = useMemo(() => contacts.filter((c) => hasContactRole(c, "paralegal")), [contacts]);
   const legalAssistants = useMemo(
-    () => contacts.filter((c) => c.role === "legal_assistant"),
+    () => contacts.filter((c) => hasContactRole(c, "legal_assistant")),
     [contacts]
   );
 
